@@ -1,4 +1,4 @@
-package io.mindspice.util;
+package io.mindspice.jxch.transact.util;
 
 
 public record Pair<U, V>(U first, V second) {

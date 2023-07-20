@@ -1,9 +1,10 @@
-package io.mindspice.settings;
+package io.mindspice.jxch.transact.settings;
 
-public class MintConfig {
+public class JobConfig {
     public int didWalletId;
     public int feeWalletId;
     public int mintWalletId;
+    public int assetWalletId;
     public int fundWallet;
     public int minFeePerCost;
     public int maxFeePerCost;
@@ -15,5 +16,5 @@ public class MintConfig {
     public boolean incFeeOnFail = true;
     public int queueMaxWaitSec = 120;
     public int queueCheckInterval;
-    public int mintJobSize;
+    public int jobSize;
 }

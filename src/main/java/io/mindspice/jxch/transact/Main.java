@@ -1,4 +1,4 @@
-package io.mindspice;
+package io.mindspice.jxch.transact;
 
 public class Main {
     public static void main(String[] args) {

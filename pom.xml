@@ -5,8 +5,8 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>io.mindspice</groupId>
-    <artifactId>jxch-bulk-mint-framework</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <artifactId>jxch-transact-framework</artifactId>
+    <version>0.1.0</version>
 
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
