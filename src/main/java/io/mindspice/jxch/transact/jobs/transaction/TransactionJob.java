@@ -14,7 +14,8 @@ import io.mindspice.jxch.transact.jobs.Job;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
-import io.mindspice.jxch.transact.util.Pair;
+
+import io.mindspice.mindlib.data.Pair;
 
 import java.util.*;
 import java.util.concurrent.Callable;
@@ -48,8 +49,8 @@ public class TransactionJob extends Job implements Callable<Pair<Boolean, List<A
 
     @Override
     public Pair<Boolean, List<Addition>> call() throws Exception {
-        tLogger.log(this.getClass(), TLogLevel.TRANSACT_INFO, "TransactionJob: " + jobId +
-                " | Started Transaction for Additions: " + txItems);
+        tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                " | Started Transaction Job for Additions: " + txItems);
         startHeight = nodeAPI.getBlockChainState().data().orElseThrow(dataExcept).peak().height();
 
         boolean incFee = false;
@@ -72,10 +73,13 @@ public class TransactionJob extends Job implements Callable<Pair<Boolean, List<A
 
             state = State.STARTED;
             for (int i = 0; i < config.maxRetries; ++i) {
+                tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                        " | Action: transactionIteration: " + i);
+
                 // Spin until sync
                 while (!walletAPI.getSyncStatus().data().orElseThrow(dataExcept).synced()) {
                     state = State.AWAITING_SYNC;
-                    tLogger.log(this.getClass(), TLogLevel.TRANSACT_ERROR, "TransactJob: " + jobId +
+                    tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                             " | Failed iteration: " + i + "/" + config.maxRetries +
                             " | Reason: Wallet " + config.mintWalletId + " not Synced" +
                             " | Retrying in " + config.retryWaitInterval + "ms");
@@ -95,11 +99,17 @@ public class TransactionJob extends Job implements Callable<Pair<Boolean, List<A
                             feeAmount = currFeePerCost * bundleCost;
                         }
                     }
+                    tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                            " | Action: FeeReCalc" +
+                            " | FeePerCost: " + feePerCost +
+                            " | totalFee: " + feePerCost * bundleCost);
                     feeBundle = getFeeBundle(feeCoin, feeAmount);
                     aggBundle = walletAPI.aggregateSpends(List.of(assetBundle, feeBundle))
                             .data().orElseThrow(dataExcept);
                 }
 
+                tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                        " | Action: PushingTransaction");
                 var pushResponse = nodeAPI.pushTx(aggBundle);
 
                 if (!pushResponse.success()) {
@@ -107,18 +117,18 @@ public class TransactionJob extends Job implements Callable<Pair<Boolean, List<A
                     // from a past iteration was successful and not recognized due to network delay or the coin was spent
                     // elsewhere as the result of user error.
                     if ((pushResponse.error().contains("DOUBLE_SPEND"))) {
-                        tLogger.log(this.getClass(), TLogLevel.TRANSACT_ERROR, "TransactJob: " + jobId +
+                        tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
                                 " | Performed a DOUBLE_SPEND, transaction consider successful. This error can be ignored, " +
                                 "but could result in a failed transaction if the coin(s) was spent elsewhere.");
 
-                        tLogger.log(this.getClass(), TLogLevel.TRANSACT_INFO, "MintJob: " + jobId +
+                        tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                                 " | TransactJob: " + jobId + " Successful (DOUBLE_SPEND)" +
                                 " | Fee: " + feeAmount +
                                 " | Additions: " + txItems);
                         state = State.SUCCESS;
                         return new Pair<>(true, txItems);
                     } else if (pushResponse.error().contains("INVALID_FEE_TOO_CLOSE_TO_ZERO")) {
-                        tLogger.log(this.getClass(), TLogLevel.TRANSACT_ERROR, "TransactJob: " + jobId +
+                        tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
                                 " | Failed iteration: " + i + "/" + config.maxRetries +
                                 " | Reason: INVALID_FEE_TOO_CLOSE_TO_ZERO " +
                                 " | Current Fee Per Cost: " + feePerCost +
@@ -136,7 +146,7 @@ public class TransactionJob extends Job implements Callable<Pair<Boolean, List<A
                     state = State.AWAITING_CONFIRMATION;
                     boolean completed = waitForTxConfirmation(txResponse.second(), excludedCoins.get(0));
                     if (completed) {
-                        tLogger.log(this.getClass(), TLogLevel.TRANSACT_INFO, "TransactJob: " + jobId +
+                        tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                                 " | TransactJob: " + jobId + " Successful" +
                                 " | Fee: " + feeAmount +
                                 " | Additions: " + txItems);
@@ -144,14 +154,14 @@ public class TransactionJob extends Job implements Callable<Pair<Boolean, List<A
                         return new Pair<>(true, txItems);
                     } else {
                         incFee = config.incFeeOnFail;
-                        tLogger.log(this.getClass(), TLogLevel.TRANSACT_ERROR, "TransactJob: " + jobId +
+                        tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
                                 " | Failed iteration: " + i + "/" + config.maxRetries +
                                 " | Reason: Tx dropped from mempool without sending " +
                                 " | Current Fee Per Cost: " + feePerCost +
                                 " | Retrying in " + config.retryWaitInterval + "ms");
                     }
                 } else {
-                    tLogger.log(this.getClass(), TLogLevel.TRANSACT_ERROR, "TransactJob: " + jobId +
+                    tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
                             " | Failed iteration: " + i + "/" + config.maxRetries +
                             " | Reason: Failed to locate tx in mempool " +
                             " | Current Fee Per Cost: " + feePerCost +
@@ -159,23 +169,23 @@ public class TransactionJob extends Job implements Callable<Pair<Boolean, List<A
                     Thread.sleep(config.retryWaitInterval);
                 }
             }
-        } catch (Exception e) {
-            tLogger.log(this.getClass(), TLogLevel.TRANSACT_FATAL, "TransactJob: " + jobId +
-                    " | Exception: " + e.getMessage() +
-                    " | Failed Transaction Items: " + txItems);
+        } catch (Exception ex) {
+            tLogger.log(this.getClass(), TLogLevel.FATAL, "Job: " + jobId +
+                    " | Exception: " + ex.getMessage() +
+                    " | Failed Transaction Items: " + txItems, ex);
             state = State.EXCEPTION;
-            throw e;
+            throw ex;
         }
-        tLogger.log(this.getClass(), TLogLevel.TRANSACT_FATAL, "MintJob: " + jobId +
+        tLogger.log(this.getClass(), TLogLevel.FATAL, "Job: " + jobId +
                 " | Status: Total Failure" +
                 " | Reason: All iteration failed.");
         state = State.FAILED;
         return new Pair<>(false, txItems);
     }
 
-
-
     private Pair<SpendBundle, List<Coin>> getAssetBundle() throws RPCException {
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                " | Action: gettingAssetBundle");
         long totalAmount = txItems.stream().mapToLong(Addition::amount).sum();
         SpendBundle spendBundle;
 

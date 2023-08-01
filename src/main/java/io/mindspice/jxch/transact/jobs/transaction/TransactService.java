@@ -6,7 +6,7 @@ import io.mindspice.jxch.rpc.schemas.wallet.Addition;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
-import io.mindspice.jxch.transact.util.Pair;
+import io.mindspice.mindlib.data.Pair;
 
 import java.time.Instant;
 import java.util.Arrays;
@@ -20,18 +20,18 @@ import java.util.stream.IntStream;
 
 
 public abstract class TransactService implements Runnable{
-    private final ScheduledExecutorService executor;
-    private final JobConfig config;
-    private final TLogger tLogger;
-    private final FullNodeAPI nodeAPI;
-    private final WalletAPI walletAPI;
-    private final boolean isCat;
+    protected final ScheduledExecutorService executor;
+    protected final JobConfig config;
+    protected final TLogger tLogger;
+    protected final FullNodeAPI nodeAPI;
+    protected final WalletAPI walletAPI;
+    protected final boolean isCat;
 
-    private final ConcurrentLinkedQueue<Addition> transactionQueue = new ConcurrentLinkedQueue<>();
+    protected final ConcurrentLinkedQueue<Addition> transactionQueue = new ConcurrentLinkedQueue<>();
 
-    private boolean stopped = true;
-    private ScheduledFuture<?> taskRef;
-    private long lastTime;
+    protected boolean stopped = true;
+    protected ScheduledFuture<?> taskRef;
+    protected long lastTime;
 
     public TransactService(ScheduledExecutorService executor, JobConfig config, TLogger tLogger,
             FullNodeAPI nodeAPI, WalletAPI walletAPI, boolean isCat) {
@@ -104,11 +104,10 @@ public abstract class TransactService implements Runnable{
                 } else {
                     onFail(transactionResult.second());
                 }
-            } catch (Exception e) {
-                tLogger.log(this.getClass(), TLogLevel.APP_ERROR,
+            } catch (Exception ex) {
+                tLogger.log(this.getClass(), TLogLevel.ERROR,
                             "TransactionJob: " + transactionJob.getJobId() + " Failed" +
-                                   " | Exception: " + e.getMessage() +
-                                   " | Trace: " + Arrays.toString(e.getStackTrace()));
+                                   " | Exception: " + ex.getMessage(), ex);
                 onFail(transactionItems);
             }
         }

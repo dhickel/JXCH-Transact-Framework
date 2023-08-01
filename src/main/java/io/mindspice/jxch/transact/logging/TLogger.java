@@ -5,4 +5,6 @@ public interface TLogger {
 
     void log(Class<?> clazz, TLogLevel TLogLevel, String message);
 
+    void log(Class<?> clazz, TLogLevel TLogLevel, String message, Exception ex);
+
 }

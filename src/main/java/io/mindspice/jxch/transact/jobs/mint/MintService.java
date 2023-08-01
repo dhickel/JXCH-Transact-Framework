@@ -5,7 +5,7 @@ import io.mindspice.jxch.rpc.http.WalletAPI;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
-import io.mindspice.jxch.transact.util.Pair;
+import io.mindspice.mindlib.data.Pair;
 
 import java.time.Instant;
 import java.util.Arrays;
@@ -16,20 +16,20 @@ import java.util.stream.IntStream;
 
 
 public abstract class MintService implements Runnable {
-    private final ScheduledExecutorService executor;
-    private final JobConfig config;
-    private final TLogger tLogger;
-    private final FullNodeAPI nodeAPI;
-    private final WalletAPI walletAPI;
+    protected final ScheduledExecutorService executor;
+    protected final JobConfig config;
+    protected final TLogger tLogger;
+    protected final FullNodeAPI nodeAPI;
+    protected final WalletAPI walletAPI;
 
-    private final ConcurrentLinkedQueue<MintItem> mintQueue = new ConcurrentLinkedQueue<>();
+    protected final ConcurrentLinkedQueue<MintItem> mintQueue = new ConcurrentLinkedQueue<>();
 
-    private boolean stopped = true;
-    private ScheduledFuture<?> taskRef;
-    private long lastTime;
+    protected boolean stopped = true;
+    protected ScheduledFuture<?> taskRef;
+    protected long lastTime;
 
     public MintService(ScheduledExecutorService scheduledExecutor, JobConfig config, TLogger tLogger,
-            WalletAPI walletAPI, FullNodeAPI nodeAPI) {
+            FullNodeAPI nodeAPI, WalletAPI walletAPI) {
         this.executor = scheduledExecutor;
         this.config = config;
         this.tLogger = tLogger;
@@ -67,6 +67,12 @@ public abstract class MintService implements Runnable {
         return true;
     }
 
+    public boolean submit(List<MintItem> items) {
+        if (stopped) { return false; }
+        mintQueue.addAll(items);
+        return true;
+    }
+
     // Override to handle what to do with failed mints
     protected abstract void onFail(List<MintItem> mintItems);
 
@@ -96,11 +102,10 @@ public abstract class MintService implements Runnable {
                 } else {
                     onFail(mintItems);
                 }
-            } catch (Exception e) {
-                tLogger.log(this.getClass(), TLogLevel.APP_ERROR,
+            } catch (Exception ex) {
+                tLogger.log(this.getClass(), TLogLevel.ERROR,
                             "MintJob: " + mintJob.getJobId() + " Failed" +
-                                   " | Exception: " + e.getMessage() +
-                                   " | Trace: " + Arrays.toString(e.getStackTrace()));
+                                   " | Exception: " + ex.getMessage(), ex);
                 onFail(mintItems);
             }
         }

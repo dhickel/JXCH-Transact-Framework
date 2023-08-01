@@ -10,9 +10,10 @@ import io.mindspice.jxch.rpc.schemas.object.MempoolItem;
 import io.mindspice.jxch.rpc.schemas.object.SpendBundle;
 import io.mindspice.jxch.rpc.util.RPCException;
 import io.mindspice.jxch.rpc.util.RequestUtils;
+import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
-import io.mindspice.jxch.transact.util.Pair;
+import io.mindspice.mindlib.data.Pair;
 
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -63,6 +64,8 @@ public abstract class Job {
     }
 
     protected Pair<Boolean, String> checkMempoolForTx(String sbHash) throws Exception {
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                " | Action: checkingMempoolForTransaction");
         Optional<String> txHash = nodeAPI.getAllMempoolItems().data().orElseThrow(dataExcept)
                 .entrySet().stream()
                 .filter(e -> e.getValue().spendBundleName().equals(sbHash))
@@ -72,6 +75,8 @@ public abstract class Job {
     }
 
     protected SpendBundle getFeeBundle(Coin feeCoin, long feeAmount) throws RPCException {
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                " | Action: gettingFeeBundle");
         JsonNode feeBundleReq = new RequestUtils.SignedTransactionBuilder()
                 .addAddition(config.mintChangeTarget, feeCoin.amount() - feeAmount) // return amount not used for fee
                 .addCoin(feeCoin)
@@ -82,10 +87,14 @@ public abstract class Job {
     }
 
     protected long getSpendCost(SpendBundle spend) throws Exception {
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                " | Action: gettingSpendBundleCost");
         return nodeAPI.getSpendBundleInclusionCost(spend).data().orElseThrow(dataExcept).cost();
     }
 
     protected long getFeePerCostNeeded(long cost) throws RPCException {
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                " | Action: gettingFeePerCostNeeded");
         Map<String, MempoolItem> mempool =
                 nodeAPI.getAllMempoolItems().data().orElseThrow(dataExcept);
 
@@ -93,7 +102,8 @@ public abstract class Job {
                 .mapToLong(MempoolItem::cost)
                 .sum();
 
-        System.out.println("total_mem_cost: " + totalMemCost);
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                " | totalMemCost: " + totalMemCost);
 
         var sortedMempool = mempool.values().stream()
                 .filter(i -> i.fee() > 0)
@@ -113,9 +123,6 @@ public abstract class Job {
                 }
             }
         }
-
-        System.out.println("fee Needed:" + feeNeeded);
-
         if (feeNeeded < 5) {
             return config.minFeePerCost;
         } else {
@@ -129,6 +136,8 @@ public abstract class Job {
     }
 
     protected Coin getFeeCoin(long amount, List<Coin> excludedCoins) throws RPCException {
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                " | Action: gettingFeeCoin");
         var jsonNode = new RequestUtils.SpendableCoinBuilder()
                 .setMinCoinAmount(amount)
                 .setExcludedCoins(excludedCoins)
@@ -145,7 +154,8 @@ public abstract class Job {
 
     protected boolean waitForTxConfirmation(String txId, Coin mintCoin) throws Exception {
         while (true) {
-            System.out.println("waiting for mint");
+            tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                    " | Action: waitingForConfirmation");
             Thread.sleep(20000);
             /* getTxStatus returns true if tx is no longer in the mempool
              Once we know it's not in the mempool, it needs to be confirmed
