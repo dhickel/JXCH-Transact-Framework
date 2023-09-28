@@ -43,6 +43,10 @@ public abstract class MintService implements Runnable {
         return mintQueue.size();
     }
 
+    public boolean isRunning() {
+        return !stopped;
+    }
+
     public void start() {
         taskRef = executor.scheduleAtFixedRate(
                 this,

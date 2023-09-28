@@ -44,6 +44,10 @@ public abstract class TransactionService implements Runnable {
         return transactionQueue.size();
     }
 
+    public boolean isRunning() {
+        return !stopped;
+    }
+
     public void start() {
         taskRef = executor.scheduleAtFixedRate(
                 this,
