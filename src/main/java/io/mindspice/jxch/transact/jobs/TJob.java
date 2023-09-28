@@ -156,8 +156,8 @@ public abstract class TJob {
                     " | Action: waitForConfirmation");
             Thread.sleep(20000);
             /* getTxStatus returns true if tx is no longer in the mempool
-             Once we know it's not in the mempool, it needs to be confirmed
-             the actual coin has been spent to confirm mint as successful */
+             Once tx is no longer in the mempool, check the one of the txCoins
+             to confirm the actual coin has been spent to confirm success */
             if (txClearedMempool(txId)) {
                 var mintCoinRecord = nodeAPI.getCoinRecordByName(ChiaUtils.getCoinId(txParentCoin));
                 return mintCoinRecord.data().orElseThrow(dataExcept).spent();
