@@ -29,16 +29,15 @@ public abstract class TransactionService extends TService<TransactionItem> imple
 
     @Override
     public void start() {
+        stopped = false;
         taskRef = executor.scheduleAtFixedRate(
                 this,
-                0,
+                10,
                 config.queueCheckInterval,
                 TimeUnit.SECONDS
         );
-        stopped = false;
         lastTime = Instant.now().getEpochSecond();
     }
-
     @Override
     public boolean stopAndBlock() {
         stopped = true;
