@@ -17,8 +17,7 @@ import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 
 import io.mindspice.jxch.transact.settings.JobConfig;
-import io.mindspice.mindlib.data.tuples.Pair;
-import io.mindspice.mindlib.util.JsonUtils;
+import io.mindspice.jxch.transact.util.Pair;
 
 import java.util.*;
 import java.util.concurrent.Callable;
@@ -251,7 +250,6 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<String>
         ApiResponse<NftBundle> nftBundle = walletAPI.nftMintBulk(bulkMintReq);
 
         if (!nftBundle.success()) {
-            tLogger.log(this.getClass(), TLogLevel.DEBUG, "BUNDLE:" + JsonUtils.writeString(bulkMintReq));
             throw new IllegalStateException("Failed To Get Spend Bundle Via RPC: " + nftBundle.error());
         }
         return new Pair<>(nftBundle.data().orElseThrow(dataExcept), mintCoin);

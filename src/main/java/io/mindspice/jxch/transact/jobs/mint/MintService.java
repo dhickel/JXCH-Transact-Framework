@@ -6,7 +6,7 @@ import io.mindspice.jxch.transact.jobs.TService;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
-import io.mindspice.mindlib.data.tuples.Pair;
+import io.mindspice.jxch.transact.util.Pair;
 
 import java.time.Instant;
 import java.util.List;

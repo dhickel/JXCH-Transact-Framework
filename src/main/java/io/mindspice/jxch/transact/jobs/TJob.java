@@ -12,7 +12,7 @@ import io.mindspice.jxch.rpc.util.RequestUtils;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
-import io.mindspice.mindlib.data.tuples.Pair;
+import io.mindspice.jxch.transact.util.Pair;
 
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
