@@ -39,12 +39,14 @@ public abstract class MintService extends TService<MintItem> implements Runnable
     @Override
     public boolean stopAndBlock() {
         stopped = true;
-        if (currentJob != null) {
-            try {
-                currentJob.get();  // This will block until the current job is finished
-                return true;
-            } catch (InterruptedException | ExecutionException e) {
-                return false;
+        while (!queue.isEmpty()) {
+            if (currentJob != null) {
+                try {
+                    currentJob.get();  // This will block until the current job is finished
+                    return true;
+                } catch (InterruptedException | ExecutionException e) {
+                    return false;
+                }
             }
         }
         return true;
@@ -59,34 +61,39 @@ public abstract class MintService extends TService<MintItem> implements Runnable
 
     public void run() {
 
-        if (queue.isEmpty()) {
-            if (stopped) { terminate(); } else { return; }
-        }
-        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Checking Queue");
+        try {
+            if (queue.isEmpty()) {
+                if (stopped) { terminate(); } else { return; }
+            }
+            tLogger.log(this.getClass(), TLogLevel.DEBUG, "Checking Queue");
 
-        long nowTime = Instant.now().getEpochSecond();
-        if (queue.size() >= config.jobSize || nowTime - lastTime >= config.queueMaxWaitSec) {
-            lastTime = nowTime;
+            long nowTime = Instant.now().getEpochSecond();
+            if (queue.size() >= config.jobSize || nowTime - lastTime >= config.queueMaxWaitSec) {
+                lastTime = nowTime;
 
-            MintJob mintJob = new MintJob(config, tLogger, nodeAPI, walletAPI);
-            List<MintItem> mintItems = IntStream.range(0, Math.min(config.jobSize, queue.size()))
-                    .mapToObj(i -> queue.poll())
-                    .filter(Objects::nonNull).toList();
-            mintJob.addMintItem(mintItems);
-            try {
-                currentJob = executor.submit(mintJob);
-                Pair<Boolean, List<String>> mintResult = currentJob.get();
-                if (mintResult.first()) {
-                    onFinish(new Pair<>(mintItems, mintResult.second()));
-                } else {
+                MintJob mintJob = new MintJob(config, tLogger, nodeAPI, walletAPI);
+                List<MintItem> mintItems = IntStream.range(0, Math.min(config.jobSize, queue.size()))
+                        .mapToObj(i -> queue.poll())
+                        .filter(Objects::nonNull).toList();
+
+                mintJob.addMintItem(mintItems);
+                try {
+                    currentJob = executor.submit(mintJob);
+                    Pair<Boolean, List<String>> mintResult = currentJob.get();
+                    if (mintResult.first()) {
+                        onFinish(new Pair<>(mintItems, mintResult.second()));
+                    } else {
+                        onFail(mintItems);
+                    }
+                } catch (Exception ex) {
+                    tLogger.log(this.getClass(), TLogLevel.ERROR,
+                            "MintJob: " + mintJob.getJobId() + " Failed" +
+                                    " | Exception: " + ex.getMessage(), ex);
                     onFail(mintItems);
                 }
-            } catch (Exception ex) {
-                tLogger.log(this.getClass(), TLogLevel.ERROR,
-                        "MintJob: " + mintJob.getJobId() + " Failed" +
-                                " | Exception: " + ex.getMessage(), ex);
-                onFail(mintItems);
             }
+        } catch (Exception e) {
+            tLogger.log(this.getClass(), TLogLevel.ERROR, "Exception running service task", e);
         }
     }
 }

@@ -120,7 +120,6 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                         " | Action: PushingTransaction");
                 var pushResponse = nodeAPI.pushTx(aggBundle);
 
-
                 if (!pushResponse.success()) {
                     // Consider transaction a success if a coin include in the spendbundle was sent
                     // from a past iteration was successful and not recognized due to network delay or the coin was spent
@@ -187,8 +186,9 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                             " | Reason: Failed to locate tx in mempool " +
                             " | Current Fee Per Cost: " + feePerCost +
                             " | Retrying in " + config.retryWaitInterval + "ms");
-                    Thread.sleep(config.retryWaitInterval);
                 }
+                state = State.RETRYING;
+                Thread.sleep(config.retryWaitInterval);
             }
         } catch (Exception ex) {
             tLogger.log(this.getClass(), TLogLevel.FAILED, "Job: " + jobId +
@@ -206,15 +206,17 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
 
     private Pair<SpendBundle, List<Coin>> getAssetBundle() throws RPCException {
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
-                " | Action: gettingAssetBundle");
+                " | Action: getAssetBundle");
         long totalAmount = txItems.stream().mapToLong(i -> i.addition().amount()).sum();
-        SpendBundle spendBundle;
+        SpendBundle spendBundle = null;
 
         JsonNode coinReq = new RequestUtils.SpendableCoinBuilder()
                 .setWalletId(config.assetWalletId)
                 .setExcludedCoins(excludedCoins)
                 .build();
 
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                " | Action: getAssetBundle:getSpendableCoins");
 
         List<Coin> spendableCoins = walletAPI.getSpendableCoins(coinReq)
                 .data().orElseThrow(dataExcept)
@@ -234,28 +236,17 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
         parentCoins = txCoins;
         excludedCoins.addAll(txCoins);
 
+        JsonNode xchSpendRequest = new RequestUtils.SignedTransactionBuilder()
+                .setWalletId(config.assetWalletId)
+                .addAdditions(txItems.stream().map(TransactionItem::addition).toList())
+                .addCoin(txCoins)
+                .build();
 
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                " | Action: getAssetBundle:createSignedTransaction");
 
-        if (isCat) {
-            JsonNode catSpendReq = new RequestUtils.CatSpendBuilder()
-                    .setWalletId(config.assetWalletId)
-                    .setCoins(txCoins)
-                    .setAdditions(txItems.stream().map(TransactionItem::addition).toList())
-                    .setReusePuzzleHash(true)
-                    .build();
-
-            spendBundle = walletAPI.catSpendBundleOnly(catSpendReq)
-                    .data().orElseThrow(dataExcept);
-        } else {
-            JsonNode xchSpendRequest = new RequestUtils.SignedTransactionBuilder()
-                    .setWalletId(config.assetWalletId)
-                    .addAdditions(txItems.stream().map(TransactionItem::addition).toList())
-                    .addCoin(txCoins)
-                    .build();
-
-            spendBundle = walletAPI.createSignedTransaction(xchSpendRequest)
-                    .data().orElseThrow(dataExcept).spendBundle();
-        }
+        spendBundle = walletAPI.createSignedTransaction(xchSpendRequest)
+                .data().orElseThrow(dataExcept).spendBundle();
         return new Pair<>(spendBundle, txCoins);
     }
 }

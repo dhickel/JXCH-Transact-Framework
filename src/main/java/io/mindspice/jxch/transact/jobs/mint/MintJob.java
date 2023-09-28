@@ -204,9 +204,10 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<String>
                             " | Current Fee Per Cost: " + feePerCost +
                             " | Retrying in " + config.retryWaitInterval + "ms");
                 }
+                state = State.RETRYING;
+                Thread.sleep(config.retryWaitInterval);
             }
-            state = State.RETRYING;
-            Thread.sleep(config.retryWaitInterval);
+
         } catch (Exception ex) {
             tLogger.log(this.getClass(), TLogLevel.FAILED, "Job: " + jobId +
                     " | Exception: " + ex.getMessage() +

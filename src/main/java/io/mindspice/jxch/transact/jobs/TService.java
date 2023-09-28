@@ -46,7 +46,9 @@ public abstract class TService<T> {
     }
 
     public void terminate() {
-        taskRef.cancel(true);
+        if (taskRef != null) {
+            taskRef.cancel(true);
+        }
     }
 
     public int size() {
@@ -54,14 +56,14 @@ public abstract class TService<T> {
     }
 
     public boolean submit(T item) {
-        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Received Mints: " + item);
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Received Items: " + item);
         if (stopped) { return false; }
         queue.add(item);
         return true;
     }
 
     public boolean submit(List<T> items) {
-        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Received Mints: " + items);
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Received Items: " + items);
         if (stopped) { return false; }
         queue.addAll(items);
         return true;

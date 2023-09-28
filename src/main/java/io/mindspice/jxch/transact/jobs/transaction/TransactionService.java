@@ -8,6 +8,7 @@ import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
 import io.mindspice.mindlib.data.tuples.Pair;
 
+import java.sql.SQLOutput;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
@@ -23,7 +24,6 @@ public abstract class TransactionService extends TService<TransactionItem> imple
     public TransactionService(ScheduledExecutorService executor, JobConfig config, TLogger tLogger,
             FullNodeAPI nodeAPI, WalletAPI walletAPI, boolean isCat) {
         super(executor, config, tLogger, nodeAPI, walletAPI);
-
         this.isCat = isCat;
     }
 
@@ -42,12 +42,14 @@ public abstract class TransactionService extends TService<TransactionItem> imple
     @Override
     public boolean stopAndBlock() {
         stopped = true;
-        if (currentJob != null) {
-            try {
-                currentJob.get();  // This will block until the current job is finished
-                return true;
-            } catch (InterruptedException | ExecutionException e) {
-                return false;
+        while (!queue.isEmpty()) {
+            if (currentJob != null) {
+                try {
+                    currentJob.get();  // This will block until the current job is finished
+                    return true;
+                } catch (InterruptedException | ExecutionException e) {
+                    return false;
+                }
             }
         }
         return true;
@@ -62,32 +64,43 @@ public abstract class TransactionService extends TService<TransactionItem> imple
 
     @Override
     public void run() {
-        if (queue.isEmpty()) {
-            if (stopped) { terminate(); } else { return; }
-        }
 
-        long nowTime = Instant.now().getEpochSecond();
-        if (queue.size() >= config.jobSize || nowTime - lastTime >= config.queueMaxWaitSec) {
-            lastTime = nowTime;
-
-            TransactionJob transactionJob = new TransactionJob(config, tLogger, nodeAPI, walletAPI, isCat);
-            List<TransactionItem> transactionItems = IntStream.range(0, Math.min(config.jobSize, queue.size()))
-                    .mapToObj(i -> queue.poll())
-                    .filter(Objects::nonNull).toList();
-            try {
-                currentJob = executor.submit(transactionJob);
-                Pair<Boolean, List<TransactionItem>> transactionResult = currentJob.get();
-                if (transactionResult.first()) {
-                    onFinish(transactionResult.second());
+        try {
+            if (queue.isEmpty()) {
+                if (stopped) {
+                    terminate();
                 } else {
-                    onFail(transactionResult.second());
+                    return;
                 }
-            } catch (Exception ex) {
-                tLogger.log(this.getClass(), TLogLevel.ERROR,
-                        "TransactionJob: " + transactionJob.getJobId() + " Failed" +
-                                " | Exception: " + ex.getMessage(), ex);
-                onFail(transactionItems);
             }
+
+            long nowTime = Instant.now().getEpochSecond();
+            if (queue.size() >= config.jobSize || nowTime - lastTime >= config.queueMaxWaitSec) {
+                lastTime = nowTime;
+
+                TransactionJob transactionJob = new TransactionJob(config, tLogger, nodeAPI, walletAPI, isCat);
+                List<TransactionItem> transactionItems = IntStream.range(0, Math.min(config.jobSize, queue.size()))
+                        .mapToObj(i -> queue.poll())
+                        .filter(Objects::nonNull).toList();
+
+                transactionJob.addTransaction(transactionItems);
+                try {
+                    currentJob = executor.submit(transactionJob);
+                    Pair<Boolean, List<TransactionItem>> transactionResult = currentJob.get();
+                    if (transactionResult.first()) {
+                        onFinish(transactionResult.second());
+                    } else {
+                        onFail(transactionResult.second());
+                    }
+                } catch (Exception ex) {
+                    tLogger.log(this.getClass(), TLogLevel.ERROR,
+                            "TransactionJob: " + transactionJob.getJobId() + " Failed" +
+                                    " | Exception: " + ex.getMessage(), ex);
+                    onFail(transactionItems);
+                }
+            }
+        } catch (Exception e) {
+            tLogger.log(this.getClass(), TLogLevel.ERROR, "Exception running service task", e);
         }
     }
 }
