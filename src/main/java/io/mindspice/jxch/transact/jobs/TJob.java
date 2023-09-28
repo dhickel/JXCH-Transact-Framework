@@ -1,12 +1,9 @@
 package io.mindspice.jxch.transact.jobs;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.mindspice.jxch.rpc.http.FullNodeAPI;
 import io.mindspice.jxch.rpc.http.WalletAPI;
-import io.mindspice.jxch.rpc.schemas.ApiResponse;
 import io.mindspice.jxch.rpc.schemas.object.Coin;
-import io.mindspice.jxch.rpc.schemas.object.CoinRecord;
 import io.mindspice.jxch.rpc.schemas.object.MempoolItem;
 import io.mindspice.jxch.rpc.schemas.object.SpendBundle;
 import io.mindspice.jxch.rpc.util.ChiaUtils;
@@ -16,14 +13,13 @@ import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
 import io.mindspice.mindlib.data.tuples.Pair;
-import io.mindspice.mindlib.util.JsonUtils;
 
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
 
 
-public abstract class Job {
+public abstract class TJob {
 
     public enum State{
         INIT,
@@ -47,7 +43,7 @@ public abstract class Job {
     protected final Supplier<RPCException> dataExcept =
             () -> new RPCException("Required RPC call returned Optional.empty");
 
-    public Job(JobConfig config, TLogger tLogger, FullNodeAPI nodeAPI, WalletAPI walletAPI) {
+    public TJob(JobConfig config, TLogger tLogger, FullNodeAPI nodeAPI, WalletAPI walletAPI) {
         this.config = config;
         this.tLogger = tLogger;
         this.nodeAPI = nodeAPI;

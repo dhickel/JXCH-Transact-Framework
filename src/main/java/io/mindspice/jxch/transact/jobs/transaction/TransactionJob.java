@@ -10,7 +10,7 @@ import io.mindspice.jxch.rpc.schemas.object.SpendBundle;
 import io.mindspice.jxch.rpc.util.ChiaUtils;
 import io.mindspice.jxch.rpc.util.RPCException;
 import io.mindspice.jxch.rpc.util.RequestUtils;
-import io.mindspice.jxch.transact.jobs.Job;
+import io.mindspice.jxch.transact.jobs.TJob;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
@@ -21,7 +21,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 
-public class TransactionJob extends Job implements Callable<Pair<Boolean, List<TransactionItem>>> {
+public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<TransactionItem>>> {
     private final List<TransactionItem> txItems;
     private final boolean isCat;
 
@@ -191,13 +191,13 @@ public class TransactionJob extends Job implements Callable<Pair<Boolean, List<T
                 }
             }
         } catch (Exception ex) {
-            tLogger.log(this.getClass(), TLogLevel.FATAL, "Job: " + jobId +
+            tLogger.log(this.getClass(), TLogLevel.FAILED, "Job: " + jobId +
                     " | Exception: " + ex.getMessage() +
                     " | Failed Transaction Items: " + txItems, ex);
             state = State.EXCEPTION;
             throw ex;
         }
-        tLogger.log(this.getClass(), TLogLevel.FATAL, "Job: " + jobId +
+        tLogger.log(this.getClass(), TLogLevel.FAILED, "Job: " + jobId +
                 " | Status: Total Failure" +
                 " | Reason: All iteration failed.");
         state = State.FAILED;

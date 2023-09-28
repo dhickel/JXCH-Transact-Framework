@@ -5,5 +5,5 @@ public enum TLogLevel {
     WARNING,
     INFO,
     DEBUG,
-    FATAL
+    FAILED
 }

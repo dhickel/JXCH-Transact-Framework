@@ -12,7 +12,7 @@ import io.mindspice.jxch.rpc.schemas.wallet.nft.MetaData;
 import io.mindspice.jxch.rpc.util.ChiaUtils;
 import io.mindspice.jxch.rpc.util.RPCException;
 import io.mindspice.jxch.rpc.util.RequestUtils;
-import io.mindspice.jxch.transact.jobs.Job;
+import io.mindspice.jxch.transact.jobs.TJob;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 
@@ -25,7 +25,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 
-public class MintJob extends Job implements Callable<Pair<Boolean, List<String>>> {
+public class MintJob extends TJob implements Callable<Pair<Boolean, List<String>>> {
     private final List<MintItem> mintItems;
 
     public MintJob(JobConfig config, TLogger tLogger, FullNodeAPI nodeAPI, WalletAPI walletAPI) {
@@ -208,13 +208,13 @@ public class MintJob extends Job implements Callable<Pair<Boolean, List<String>>
             state = State.RETRYING;
             Thread.sleep(config.retryWaitInterval);
         } catch (Exception ex) {
-            tLogger.log(this.getClass(), TLogLevel.FATAL, "Job: " + jobId +
+            tLogger.log(this.getClass(), TLogLevel.FAILED, "Job: " + jobId +
                     " | Exception: " + ex.getMessage() +
                     " | Failed UUIDs: " + mintIds, ex);
             state = State.EXCEPTION;
             throw ex;
         }
-        tLogger.log(this.getClass(), TLogLevel.FATAL, "Job: " + jobId +
+        tLogger.log(this.getClass(), TLogLevel.FAILED, "Job: " + jobId +
                 " | Status: Total Failure" +
                 " | Reason: All iteration failed.");
         state = State.FAILED;

@@ -2,6 +2,7 @@ package io.mindspice.jxch.transact.jobs.transaction;
 
 import io.mindspice.jxch.rpc.http.FullNodeAPI;
 import io.mindspice.jxch.rpc.http.WalletAPI;
+import io.mindspice.jxch.transact.jobs.TService;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
@@ -14,40 +15,19 @@ import java.util.concurrent.*;
 import java.util.stream.IntStream;
 
 
-public abstract class TransactionService implements Runnable {
-    protected final ScheduledExecutorService executor;
-    protected final JobConfig config;
-    protected final TLogger tLogger;
-    protected final FullNodeAPI nodeAPI;
-    protected final WalletAPI walletAPI;
+public abstract class TransactionService extends TService<TransactionItem> implements Runnable {
+
     protected final boolean isCat;
-
-    protected final ConcurrentLinkedQueue<TransactionItem> transactionQueue = new ConcurrentLinkedQueue<>();
-
-    protected volatile boolean stopped = true;
-    protected volatile ScheduledFuture<?> taskRef;
     protected volatile Future<Pair<Boolean, List<TransactionItem>>> currentJob;
-    protected volatile long lastTime;
 
     public TransactionService(ScheduledExecutorService executor, JobConfig config, TLogger tLogger,
             FullNodeAPI nodeAPI, WalletAPI walletAPI, boolean isCat) {
-        this.executor = executor;
-        this.config = config;
-        this.tLogger = tLogger;
-        this.nodeAPI = nodeAPI;
-        this.walletAPI = walletAPI;
+        super(executor, config, tLogger, nodeAPI, walletAPI);
+
         this.isCat = isCat;
     }
 
-    public int stop() {
-        stopped = true;
-        return transactionQueue.size();
-    }
-
-    public boolean isRunning() {
-        return !stopped;
-    }
-
+    @Override
     public void start() {
         taskRef = executor.scheduleAtFixedRate(
                 this,
@@ -59,10 +39,7 @@ public abstract class TransactionService implements Runnable {
         lastTime = Instant.now().getEpochSecond();
     }
 
-    private void terminate() {
-        taskRef.cancel(true);
-    }
-
+    @Override
     public boolean stopAndBlock() {
         stopped = true;
         if (currentJob != null) {
@@ -76,22 +53,6 @@ public abstract class TransactionService implements Runnable {
         return true;
     }
 
-    public int size() {
-        return transactionQueue.size();
-    }
-
-    public boolean submit(TransactionItem item) {
-        if (stopped) { return false; }
-        transactionQueue.add(item);
-        return true;
-    }
-
-    public boolean submit(List<TransactionItem> items) {
-        if (stopped) { return false; }
-        transactionQueue.addAll(items);
-        return true;
-    }
-
     // Override to handle what to do with failed mints
     protected abstract void onFail(List<TransactionItem> transactionItems);
 
@@ -101,17 +62,17 @@ public abstract class TransactionService implements Runnable {
 
     @Override
     public void run() {
-        if (transactionQueue.isEmpty()) {
+        if (queue.isEmpty()) {
             if (stopped) { terminate(); } else { return; }
         }
 
         long nowTime = Instant.now().getEpochSecond();
-        if (transactionQueue.size() >= config.jobSize || nowTime - lastTime >= config.queueMaxWaitSec) {
+        if (queue.size() >= config.jobSize || nowTime - lastTime >= config.queueMaxWaitSec) {
             lastTime = nowTime;
 
             TransactionJob transactionJob = new TransactionJob(config, tLogger, nodeAPI, walletAPI, isCat);
-            List<TransactionItem> transactionItems = IntStream.range(0, Math.min(config.jobSize, transactionQueue.size()))
-                    .mapToObj(i -> transactionQueue.poll())
+            List<TransactionItem> transactionItems = IntStream.range(0, Math.min(config.jobSize, queue.size()))
+                    .mapToObj(i -> queue.poll())
                     .filter(Objects::nonNull).toList();
             try {
                 currentJob = executor.submit(transactionJob);
@@ -129,5 +90,4 @@ public abstract class TransactionService implements Runnable {
             }
         }
     }
-
 }
