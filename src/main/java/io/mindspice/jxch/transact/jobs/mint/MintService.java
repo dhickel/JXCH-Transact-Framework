@@ -2,6 +2,7 @@ package io.mindspice.jxch.transact.jobs.mint;
 
 import io.mindspice.jxch.rpc.http.FullNodeAPI;
 import io.mindspice.jxch.rpc.http.WalletAPI;
+import io.mindspice.jxch.transact.jobs.transaction.TransactionItem;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
@@ -25,6 +26,7 @@ public abstract class MintService implements Runnable {
 
     protected volatile boolean stopped = true;
     protected volatile ScheduledFuture<?> taskRef;
+    protected volatile Future<Pair<Boolean, List<String>>> currentJob;
     protected volatile long lastTime;
 
     public MintService(ScheduledExecutorService scheduledExecutor, JobConfig config, TLogger tLogger,
@@ -54,6 +56,19 @@ public abstract class MintService implements Runnable {
 
     private void terminate() {
         taskRef.cancel(true);
+    }
+
+    public boolean stopAndBlock() {
+        stopped = true;
+        if (currentJob != null) {
+            try {
+                currentJob.get();  // This will block until the current job is finished
+                return true;
+            } catch (InterruptedException | ExecutionException e) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public int size() {
@@ -98,7 +113,8 @@ public abstract class MintService implements Runnable {
                     .filter(Objects::nonNull).toList();
             mintJob.addMintItem(mintItems);
             try {
-                Pair<Boolean, List<String>> mintResult = executor.submit(mintJob).get();
+                currentJob = executor.submit(mintJob);
+                Pair<Boolean, List<String>> mintResult =currentJob.get();
                 if (mintResult.first()) {
                     onFinish(new Pair<>(mintItems, mintResult.second()));
                 } else {

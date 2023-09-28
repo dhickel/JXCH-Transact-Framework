@@ -10,14 +10,11 @@ import io.mindspice.mindlib.data.tuples.Pair;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.stream.IntStream;
 
 
-public abstract class TransactionService implements Runnable{
+public abstract class TransactionService implements Runnable {
     protected final ScheduledExecutorService executor;
     protected final JobConfig config;
     protected final TLogger tLogger;
@@ -29,6 +26,7 @@ public abstract class TransactionService implements Runnable{
 
     protected volatile boolean stopped = true;
     protected volatile ScheduledFuture<?> taskRef;
+    protected volatile Future<Pair<Boolean, List<TransactionItem>>> currentJob;
     protected volatile long lastTime;
 
     public TransactionService(ScheduledExecutorService executor, JobConfig config, TLogger tLogger,
@@ -61,6 +59,19 @@ public abstract class TransactionService implements Runnable{
         taskRef.cancel(true);
     }
 
+    public boolean stopAndBlock() {
+        stopped = true;
+        if (currentJob != null) {
+            try {
+                currentJob.get();  // This will block until the current job is finished
+                return true;
+            } catch (InterruptedException | ExecutionException e) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public int size() {
         return transactionQueue.size();
     }
@@ -77,15 +88,12 @@ public abstract class TransactionService implements Runnable{
         return true;
     }
 
-
-
     // Override to handle what to do with failed mints
     protected abstract void onFail(List<TransactionItem> transactionItems);
 
     // Override if you have actions that need performed on finished mints
     // returns the original items, as well as their on chain NFT Ids
     protected abstract void onFinish(List<TransactionItem> transactionItems);
-
 
     @Override
     public void run() {
@@ -102,7 +110,8 @@ public abstract class TransactionService implements Runnable{
                     .mapToObj(i -> transactionQueue.poll())
                     .filter(Objects::nonNull).toList();
             try {
-                Pair<Boolean, List<TransactionItem>> transactionResult = executor.submit(transactionJob).get();
+                currentJob = executor.submit(transactionJob);
+                Pair<Boolean, List<TransactionItem>> transactionResult = currentJob.get();
                 if (transactionResult.first()) {
                     onFinish(transactionResult.second());
                 } else {
@@ -110,8 +119,8 @@ public abstract class TransactionService implements Runnable{
                 }
             } catch (Exception ex) {
                 tLogger.log(this.getClass(), TLogLevel.ERROR,
-                            "TransactionJob: " + transactionJob.getJobId() + " Failed" +
-                                   " | Exception: " + ex.getMessage(), ex);
+                        "TransactionJob: " + transactionJob.getJobId() + " Failed" +
+                                " | Exception: " + ex.getMessage(), ex);
                 onFail(transactionItems);
             }
         }

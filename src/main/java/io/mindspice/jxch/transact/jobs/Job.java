@@ -41,7 +41,7 @@ public abstract class Job {
     protected final FullNodeAPI nodeAPI;
     protected final String jobId = UUID.randomUUID().toString();
     protected final List<Coin> excludedCoins =  new CopyOnWriteArrayList<>();
-    protected int startHeight;
+    protected volatile int startHeight;
     protected volatile State state = State.INIT;
 
     protected final Supplier<RPCException> dataExcept =
