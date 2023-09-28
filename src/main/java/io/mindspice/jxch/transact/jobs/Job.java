@@ -1,5 +1,6 @@
 package io.mindspice.jxch.transact.jobs;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.mindspice.jxch.rpc.http.FullNodeAPI;
 import io.mindspice.jxch.rpc.http.WalletAPI;
@@ -8,12 +9,14 @@ import io.mindspice.jxch.rpc.schemas.object.Coin;
 import io.mindspice.jxch.rpc.schemas.object.CoinRecord;
 import io.mindspice.jxch.rpc.schemas.object.MempoolItem;
 import io.mindspice.jxch.rpc.schemas.object.SpendBundle;
+import io.mindspice.jxch.rpc.util.ChiaUtils;
 import io.mindspice.jxch.rpc.util.RPCException;
 import io.mindspice.jxch.rpc.util.RequestUtils;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
-import io.mindspice.mindlib.data.Pair;
+import io.mindspice.mindlib.data.tuples.Pair;
+import io.mindspice.mindlib.util.JsonUtils;
 
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -110,14 +113,11 @@ public abstract class Job {
                 .sorted(Comparator.comparing(MempoolItem::fee))
                 .toList();
 
-        System.out.println("sorted mempool size: " + sortedMempool.size());
-        // FIXME I think this is bugged, copied form old code, investigate.
         var memSum = 0L;
         var feeNeeded = 0L;
         for (MempoolItem item : sortedMempool) {
             if (memSum < (cost * 1.05)) { // 5% extra  for a buffer
                 memSum += item.cost();
-                System.out.println(item.fee());
                 if (item.cost() > 0) {
                     feeNeeded = item.fee() / item.cost();
                 }
@@ -138,6 +138,7 @@ public abstract class Job {
     protected Coin getFeeCoin(long amount, List<Coin> excludedCoins) throws RPCException {
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: gettingFeeCoin");
+
         var jsonNode = new RequestUtils.SpendableCoinBuilder()
                 .setMinCoinAmount(amount)
                 .setExcludedCoins(excludedCoins)
@@ -148,40 +149,32 @@ public abstract class Job {
                 .data()
                 .orElseThrow(dataExcept)
                 .confirmedRecords()
-                .stream().sorted().toList()
+                .stream().sorted(Comparator.comparing(c -> c.coin().amount()))
+                .toList()
                 .get(0).coin();
     }
 
-    protected boolean waitForTxConfirmation(String txId, Coin mintCoin) throws Exception {
+    protected boolean waitForTxConfirmation(String txId, Coin txParentCoin) throws Exception {
         while (true) {
             tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
-                    " | Action: waitingForConfirmation");
+                    " | Action: waitForConfirmation");
             Thread.sleep(20000);
             /* getTxStatus returns true if tx is no longer in the mempool
              Once we know it's not in the mempool, it needs to be confirmed
              the actual coin has been spent to confirm mint as successful */
             if (txClearedMempool(txId)) {
-                ApiResponse<List<CoinRecord>> recordReq = nodeAPI.getCoinRecordsByParentIds(
-                        List.of(mintCoin.parentCoinInfo()),
-                        startHeight,
-                        Integer.MAX_VALUE,
-                        true
-                );
-
-                return recordReq.data().orElseThrow(dataExcept)
-                        .stream()
-                        .filter(CoinRecord::spent)
-                        .anyMatch(cr -> cr.coin().amount() == mintCoin.amount());
+                var mintCoinRecord = nodeAPI.getCoinRecordByName(ChiaUtils.getCoinId(txParentCoin));
+                return mintCoinRecord.data().orElseThrow(dataExcept).spent();
             }
         }
     }
 
     //todo test if there is an actual data object still returned when not found
     protected boolean txClearedMempool(String txId) throws RPCException {
-        return nodeAPI.getMempoolItemByTxId(txId)
-                .data()
-                .isEmpty();
+        var resp = nodeAPI.getMempoolItemByTxId(txId);
+        return resp.data().isEmpty();
     }
+
 
 
 }

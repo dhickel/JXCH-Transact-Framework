@@ -9,6 +9,7 @@ import io.mindspice.jxch.rpc.schemas.custom.NftBundle;
 import io.mindspice.jxch.rpc.schemas.object.Coin;
 import io.mindspice.jxch.rpc.schemas.object.SpendBundle;
 import io.mindspice.jxch.rpc.schemas.wallet.nft.MetaData;
+import io.mindspice.jxch.rpc.util.ChiaUtils;
 import io.mindspice.jxch.rpc.util.RPCException;
 import io.mindspice.jxch.rpc.util.RequestUtils;
 import io.mindspice.jxch.transact.jobs.Job;
@@ -16,10 +17,12 @@ import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 
 import io.mindspice.jxch.transact.settings.JobConfig;
-import io.mindspice.mindlib.data.Pair;
+import io.mindspice.mindlib.data.tuples.Pair;
+import io.mindspice.mindlib.util.JsonUtils;
 
 import java.util.*;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 
 public class MintJob extends Job implements Callable<Pair<Boolean, List<String>>> {
@@ -27,26 +30,25 @@ public class MintJob extends Job implements Callable<Pair<Boolean, List<String>>
 
     public MintJob(JobConfig config, TLogger tLogger, FullNodeAPI nodeAPI, WalletAPI walletAPI) {
         super(config, tLogger, nodeAPI, walletAPI);
-        mintItems = new ArrayList<>(config.jobSize);
+        mintItems =  new CopyOnWriteArrayList<>();
     }
 
     public void addMintItem(List<MintItem> mintItems) {
+        if (state != State.INIT) { throw new IllegalStateException("Cannot add items after starting."); }
         this.mintItems.addAll(mintItems);
     }
 
     public void addMintItem(MintItem mintItem) {
+        if (state != State.INIT) { throw new IllegalStateException("Cannot add items after starting."); }
         this.mintItems.add(mintItem);
     }
 
-    // TODO return the mint items instead of just ids. The items have the ids, and returning the items
-    //  allows for simpler processing of failed mints so they can be readded to queue without holding
-    //  a reference in MintService
     @Override
     public Pair<Boolean, List<String>> call() throws Exception {
         List<String> mintIds = mintItems.stream().map(MintItem::uuid).toList();
         tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                 " | Started Mint Job for NFT UUIDs: " + mintIds);
-        startHeight = nodeAPI.getBlockChainState().data().orElseThrow(dataExcept).peak().height();
+        startHeight = nodeAPI.getHeight().data().orElseThrow(dataExcept);
 
         try {
 
@@ -61,13 +63,17 @@ public class MintJob extends Job implements Callable<Pair<Boolean, List<String>>
             long feeAmount = feePerCost * bundleCost;
 
             // Get max so coin can be reused for all fee calculations
-            Coin feeCoin = getFeeCoin(bundleCost * config.maxFeePerCost, List.of(mintCoin));
+            Coin feeCoin = getFeeCoin(bundleCost * config.maxFeePerCost, excludedCoins);
             excludedCoins.add(feeCoin);
             SpendBundle feeBundle = getFeeBundle(feeCoin, feeAmount);
 
             SpendBundle aggBundle = walletAPI.aggregateSpends(List.of(nftSpendBundle, feeBundle))
                     .data().orElseThrow(dataExcept);
 
+
+            tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                    " | Mint Coin: " + ChiaUtils.getCoinId(mintCoin) +
+                    " | Fee Coin: " + ChiaUtils.getCoinId(feeCoin));
 
             /* Main loop, will keep trying until a successful mint, or until max reties are hit,
                recalculating the fee every iteration incrementing additionally as per config */
@@ -111,7 +117,6 @@ public class MintJob extends Job implements Callable<Pair<Boolean, List<String>>
                     aggBundle = walletAPI.aggregateSpends(List.of(nftSpendBundle, feeBundle))
                             .data().orElseThrow(dataExcept);
                 }
-
                 tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                         " | Action: PushingTransaction");
                 var pushResponse = nodeAPI.pushTx(aggBundle);
@@ -121,6 +126,15 @@ public class MintJob extends Job implements Callable<Pair<Boolean, List<String>>
                     // from a past iteration was successful and not recognized due to network delay or the coin was spent
                     // elsewhere as the result of user error.
                     if ((pushResponse.error().contains("DOUBLE_SPEND"))) {
+                        if (i == 0) {
+                            tLogger.log(this.getClass(), TLogLevel.ERROR, "MintJob: " + jobId +
+                                    " | MintJob: " + jobId + " Failed (DOUBLE_SPEND) on first iteration." +
+                                    " | Note:  Double spend can be due to a past successful transaction being " +
+                                    "re-submitted, but this would never occur on a first iteration" +
+                                    " | Fee: " + feeAmount +
+                                    " | Minted UUIDs: " + mintIds);
+                            throw new IllegalStateException("Double spend on first iteration");
+                        }
                         tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                                 " | Performed a DOUBLE_SPEND, mint consider successful. This error can be ignored, " +
                                 "but could result in a failed mint if the coin was spent elsewhere.");
@@ -146,12 +160,29 @@ public class MintJob extends Job implements Callable<Pair<Boolean, List<String>>
                 Pair<Boolean, String> txResponse =
                         checkMempoolForTx(pushResponse.data().orElseThrow(dataExcept).spendBundleName());
 
+                int waitReps = 0;
+                while (waitReps < 10 && !txResponse.first()) {
+                    Thread.sleep(5000);
+                    waitReps++;
+                    txResponse = checkMempoolForTx(pushResponse.data().orElseThrow(dataExcept).spendBundleName());
+                    tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                            " | Transaction State: Awaiting mempool detection" +
+                            " | Wait Iteration: " + waitReps +
+                            " | Note: You \"should\" + not see this message, if this is happening often there may be issues" +
+                            "with your node and/or node resources");
+                }
+
                 if (txResponse.first()) {
                     state = State.AWAITING_CONFIRMATION;
+                    tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                            " | Transaction State: In Mempool" +
+                            " | Transaction Id: " + txResponse.second());
+
                     boolean completed = waitForTxConfirmation(txResponse.second(), mintCoin);
                     if (completed) {
                         tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
-                                " | MintJob: " + jobId + " Successful" +
+                                " | Transaction State: Successful" +
+                                " | Transaction Id: " + txResponse.second() +
                                 " | Fee: " + feeAmount +
                                 " | Minted UUIDs: " + mintIds);
                         state = State.SUCCESS;
@@ -159,15 +190,17 @@ public class MintJob extends Job implements Callable<Pair<Boolean, List<String>>
                     } else {
                         incFee = config.incFeeOnFail;
                         tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
-                                " | Failed iteration: " + i + "/" + config.maxRetries +
+                                " | Transaction State: Failed" +
+                                " | Transaction Id: " + txResponse.second() +
+                                " | Iteration: " + i + "/" + config.maxRetries +
                                 " | Reason: Tx dropped from mempool without minting " +
                                 " | Current Fee Per Cost: " + feePerCost +
                                 " | Retrying in " + config.retryWaitInterval + "ms");
                     }
                 } else {
                     tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
-                            " | Failed iteration: " + i + "/" + config.maxRetries +
-                            " | Reason: Failed to locate tx in mempool " +
+                            " | Transaction State: Failed to locate tx in mempool" +
+                            " | Iteration: " + i + "/" + config.maxRetries +
                             " | Current Fee Per Cost: " + feePerCost +
                             " | Retrying in " + config.retryWaitInterval + "ms");
                 }
@@ -217,6 +250,7 @@ public class MintJob extends Job implements Callable<Pair<Boolean, List<String>>
         ApiResponse<NftBundle> nftBundle = walletAPI.nftMintBulk(bulkMintReq);
 
         if (!nftBundle.success()) {
+            tLogger.log(this.getClass(), TLogLevel.DEBUG, "BUNDLE:" + JsonUtils.writeString(bulkMintReq));
             throw new IllegalStateException("Failed To Get Spend Bundle Via RPC: " + nftBundle.error());
         }
         return new Pair<>(nftBundle.data().orElseThrow(dataExcept), mintCoin);
@@ -234,25 +268,29 @@ public class MintJob extends Job implements Callable<Pair<Boolean, List<String>>
                 .data()
                 .orElseThrow(dataExcept)
                 .confirmedRecords()
-                .stream().sorted()
+                .stream().sorted(Comparator.comparing(c -> c.coin().amount()))
                 .toList()
                 .get(0).coin();
     }
 
     private Coin getDidCoin() throws RPCException {
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
-                " | Action: GettingDIDCoin");
-        String coinId = walletAPI.didGetDID(config.didWalletId)
+                " | Action: GetDIDCoin:didGetDID");
+
+        String didCoinId = walletAPI.didGetDID(config.didWalletId)
                 .data()
                 .orElseThrow(dataExcept)
                 .coinId();
 
-        var coinReq = walletAPI.getCoinRecordsByNames(
-                List.of(coinId),
-                0,
-                Integer.MAX_VALUE,
-                false
-        );
-        return coinReq.data().orElseThrow(dataExcept).get(0).coin();
+
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                " | Action: GettingDIDCoin:didGetInfo");
+
+        var currDidCoin = walletAPI.didGetInfo(didCoinId).data().orElseThrow(dataExcept).latestCoin();
+
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                " | Action: GettingDIDCoin:getCoinRecordsByName");
+        var coinReq = nodeAPI.getCoinRecordByName(currDidCoin);
+        return coinReq.data().orElseThrow(dataExcept).coin();
     }
 }

@@ -6,7 +6,7 @@
 
     <groupId>io.mindspice</groupId>
     <artifactId>jxch-transact-framework</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
 
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
@@ -21,11 +21,11 @@
             <version>0.1.0</version>
         </dependency>
 
-<!--        <dependency>-->
-<!--            <groupId>com.fasterxml.jackson.core</groupId>-->
-<!--            <artifactId>jackson-databind</artifactId>-->
-<!--            <version>2.14.2</version>-->
-<!--        </dependency>-->
+        <dependency>
+            <groupId>io.mindspice</groupId>
+            <artifactId>mind-lib</artifactId>
+            <version>0.2.0</version>
+        </dependency>
     </dependencies>
 
 </project>

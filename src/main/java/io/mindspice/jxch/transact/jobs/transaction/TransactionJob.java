@@ -7,54 +7,59 @@ import io.mindspice.jxch.rpc.http.WalletAPI;
 import io.mindspice.jxch.rpc.schemas.object.Coin;
 import io.mindspice.jxch.rpc.schemas.object.CoinRecord;
 import io.mindspice.jxch.rpc.schemas.object.SpendBundle;
-import io.mindspice.jxch.rpc.schemas.wallet.Addition;
+import io.mindspice.jxch.rpc.util.ChiaUtils;
 import io.mindspice.jxch.rpc.util.RPCException;
 import io.mindspice.jxch.rpc.util.RequestUtils;
 import io.mindspice.jxch.transact.jobs.Job;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
-
-import io.mindspice.mindlib.data.Pair;
+import io.mindspice.mindlib.data.tuples.Pair;
 
 import java.util.*;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 
-public class TransactionJob extends Job implements Callable<Pair<Boolean, List<Addition>>> {
-    private final List<Addition> txItems;
+public class TransactionJob extends Job implements Callable<Pair<Boolean, List<TransactionItem>>> {
+    private final List<TransactionItem> txItems;
     private final boolean isCat;
+
+    private List<Coin> parentCoins;
 
     public TransactionJob(JobConfig config, TLogger tLogger, FullNodeAPI nodeAPI, WalletAPI walletAPI, boolean isCat) {
         super(config, tLogger, nodeAPI, walletAPI);
         this.isCat = isCat;
-        txItems = new ArrayList<>(config.jobSize);
+        txItems = new CopyOnWriteArrayList<>();
     }
 
-    public void addAddition(Addition addition) {
-        txItems.add(addition);
+    public void addTransaction(TransactionItem transactionItem) {
+        if (state != State.INIT) { throw new IllegalStateException("Cannot add items after starting."); }
+        txItems.add(transactionItem);
     }
 
-    public void addAddition(List<Addition> additions) {
-        txItems.addAll(additions);
+    public void addTransaction(List<TransactionItem> transactionItem) {
+        if (state != State.INIT) { throw new IllegalStateException("Cannot add items after starting."); }
+        txItems.addAll(transactionItem);
     }
 
     public void addExcludedCoin(Coin excluded) {
+        if (state != State.INIT) { throw new IllegalStateException("Cannot add items after starting."); }
         excludedCoins.add(excluded);
     }
 
     public void addExcludedCoins(List<Coin> excluded) {
+        if (state != State.INIT) { throw new IllegalStateException("Cannot add items after starting."); }
         excludedCoins.addAll(excluded);
     }
 
     @Override
-    public Pair<Boolean, List<Addition>> call() throws Exception {
+    public Pair<Boolean, List<TransactionItem>> call() throws Exception {
         tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                 " | Started Transaction Job for Additions: " + txItems);
         startHeight = nodeAPI.getBlockChainState().data().orElseThrow(dataExcept).peak().height();
 
         boolean incFee = false;
-        boolean reSpend = false;
 
         try {
             Pair<SpendBundle, List<Coin>> assetData = getAssetBundle();
@@ -70,6 +75,10 @@ public class TransactionJob extends Job implements Callable<Pair<Boolean, List<A
             SpendBundle feeBundle = getFeeBundle(feeCoin, feeAmount);
             SpendBundle aggBundle = walletAPI.aggregateSpends(List.of(assetBundle, feeBundle))
                     .data().orElseThrow(dataExcept);
+
+            tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                    " | Parent Coins: " + parentCoins.stream().map(ChiaUtils::getCoinId).toList() +
+                    " | Fee Coin: " + ChiaUtils.getCoinId(feeCoin));
 
             state = State.STARTED;
             for (int i = 0; i < config.maxRetries; ++i) {
@@ -88,7 +97,6 @@ public class TransactionJob extends Job implements Callable<Pair<Boolean, List<A
                 state = i == 0 ? State.STARTED : State.RETRYING;
 
                 if (i != 0 && !(feePerCost >= config.maxFeePerCost)) {
-                    System.out.println("fee Re calc");
 
                     long currFeePerCost = getFeePerCostNeeded(bundleCost);
                     if (currFeePerCost > feePerCost) {
@@ -111,6 +119,7 @@ public class TransactionJob extends Job implements Callable<Pair<Boolean, List<A
                 tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                         " | Action: PushingTransaction");
                 var pushResponse = nodeAPI.pushTx(aggBundle);
+
 
                 if (!pushResponse.success()) {
                     // Consider transaction a success if a coin include in the spendbundle was sent
@@ -141,6 +150,18 @@ public class TransactionJob extends Job implements Callable<Pair<Boolean, List<A
 
                 Pair<Boolean, String> txResponse =
                         checkMempoolForTx(pushResponse.data().orElseThrow(dataExcept).spendBundleName());
+
+                int waitReps = 0;
+                while (waitReps < 10 && !txResponse.first()) {
+                    Thread.sleep(5000);
+                    waitReps++;
+                    txResponse = checkMempoolForTx(pushResponse.data().orElseThrow(dataExcept).spendBundleName());
+                    tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                            " | Transaction State: Awaiting mempool detection" +
+                            " | Wait Iteration: " + waitReps +
+                            " | Note: You \"should\" + not see this message, if this is happening often there may be issues" +
+                            "with your node and/or node resources");
+                }
 
                 if (txResponse.first()) {
                     state = State.AWAITING_CONFIRMATION;
@@ -186,12 +207,14 @@ public class TransactionJob extends Job implements Callable<Pair<Boolean, List<A
     private Pair<SpendBundle, List<Coin>> getAssetBundle() throws RPCException {
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: gettingAssetBundle");
-        long totalAmount = txItems.stream().mapToLong(Addition::amount).sum();
+        long totalAmount = txItems.stream().mapToLong(i -> i.addition().amount()).sum();
         SpendBundle spendBundle;
 
         JsonNode coinReq = new RequestUtils.SpendableCoinBuilder()
                 .setWalletId(config.assetWalletId)
+                .setExcludedCoins(excludedCoins)
                 .build();
+
 
         List<Coin> spendableCoins = walletAPI.getSpendableCoins(coinReq)
                 .data().orElseThrow(dataExcept)
@@ -208,11 +231,16 @@ public class TransactionJob extends Job implements Callable<Pair<Boolean, List<A
             } else { break; }
         }
 
+        parentCoins = txCoins;
+        excludedCoins.addAll(txCoins);
+
+
+
         if (isCat) {
             JsonNode catSpendReq = new RequestUtils.CatSpendBuilder()
                     .setWalletId(config.assetWalletId)
                     .setCoins(txCoins)
-                    .setAdditions(txItems)
+                    .setAdditions(txItems.stream().map(TransactionItem::addition).toList())
                     .setReusePuzzleHash(true)
                     .build();
 
@@ -221,7 +249,7 @@ public class TransactionJob extends Job implements Callable<Pair<Boolean, List<A
         } else {
             JsonNode xchSpendRequest = new RequestUtils.SignedTransactionBuilder()
                     .setWalletId(config.assetWalletId)
-                    .addAdditions(txItems)
+                    .addAdditions(txItems.stream().map(TransactionItem::addition).toList())
                     .addCoin(txCoins)
                     .build();
 

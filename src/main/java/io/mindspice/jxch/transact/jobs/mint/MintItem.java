@@ -14,6 +14,11 @@ public record MintItem(
         @JsonProperty("meta_data") MetaData metaData,
         @JsonProperty("uuid") String uuid
 ) {
+
+        public MintItem(String targetAddress, MetaData metaData) {
+                this(targetAddress, metaData, UUID.randomUUID().toString());
+        }
+
         public MintItem {
                 if (uuid == null) { uuid = UUID.randomUUID().toString(); }
         }

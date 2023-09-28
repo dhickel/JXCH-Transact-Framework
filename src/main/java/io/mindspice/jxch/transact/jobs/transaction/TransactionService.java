@@ -2,14 +2,12 @@ package io.mindspice.jxch.transact.jobs.transaction;
 
 import io.mindspice.jxch.rpc.http.FullNodeAPI;
 import io.mindspice.jxch.rpc.http.WalletAPI;
-import io.mindspice.jxch.rpc.schemas.wallet.Addition;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
-import io.mindspice.mindlib.data.Pair;
+import io.mindspice.mindlib.data.tuples.Pair;
 
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -19,7 +17,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 
 
-public abstract class TransactService implements Runnable{
+public abstract class TransactionService implements Runnable{
     protected final ScheduledExecutorService executor;
     protected final JobConfig config;
     protected final TLogger tLogger;
@@ -27,13 +25,13 @@ public abstract class TransactService implements Runnable{
     protected final WalletAPI walletAPI;
     protected final boolean isCat;
 
-    protected final ConcurrentLinkedQueue<Addition> transactionQueue = new ConcurrentLinkedQueue<>();
+    protected final ConcurrentLinkedQueue<TransactionItem> transactionQueue = new ConcurrentLinkedQueue<>();
 
-    protected boolean stopped = true;
-    protected ScheduledFuture<?> taskRef;
-    protected long lastTime;
+    protected volatile boolean stopped = true;
+    protected volatile ScheduledFuture<?> taskRef;
+    protected volatile long lastTime;
 
-    public TransactService(ScheduledExecutorService executor, JobConfig config, TLogger tLogger,
+    public TransactionService(ScheduledExecutorService executor, JobConfig config, TLogger tLogger,
             FullNodeAPI nodeAPI, WalletAPI walletAPI, boolean isCat) {
         this.executor = executor;
         this.config = config;
@@ -67,20 +65,26 @@ public abstract class TransactService implements Runnable{
         return transactionQueue.size();
     }
 
-    public boolean submit(Addition item) {
+    public boolean submit(TransactionItem item) {
         if (stopped) { return false; }
         transactionQueue.add(item);
+        return true;
+    }
+
+    public boolean submit(List<TransactionItem> items) {
+        if (stopped) { return false; }
+        transactionQueue.addAll(items);
         return true;
     }
 
 
 
     // Override to handle what to do with failed mints
-    protected abstract void onFail(List<Addition> transactionItems);
+    protected abstract void onFail(List<TransactionItem> transactionItems);
 
     // Override if you have actions that need performed on finished mints
     // returns the original items, as well as their on chain NFT Ids
-    protected abstract void onFinish(List<Addition> transactionItems);
+    protected abstract void onFinish(List<TransactionItem> transactionItems);
 
 
     @Override
@@ -94,11 +98,11 @@ public abstract class TransactService implements Runnable{
             lastTime = nowTime;
 
             TransactionJob transactionJob = new TransactionJob(config, tLogger, nodeAPI, walletAPI, isCat);
-            List<Addition> transactionItems = IntStream.range(0, Math.min(config.jobSize, transactionQueue.size()))
+            List<TransactionItem> transactionItems = IntStream.range(0, Math.min(config.jobSize, transactionQueue.size()))
                     .mapToObj(i -> transactionQueue.poll())
                     .filter(Objects::nonNull).toList();
             try {
-                Pair<Boolean, List<Addition>> transactionResult = executor.submit(transactionJob).get();
+                Pair<Boolean, List<TransactionItem>> transactionResult = executor.submit(transactionJob).get();
                 if (transactionResult.first()) {
                     onFinish(transactionResult.second());
                 } else {

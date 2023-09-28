@@ -1,0 +1,16 @@
+---
+startHeight: 2993180
+heightBuffer: 12
+isPaused: false
+okraDBUri: "http://192.168.122.140:9191"
+okraDBUser: "user"
+okraDBPass: "pass"
+chiaDBUri: "http://192.168.122.201:9191"
+chiaDBUser: "user"
+chiaDBPass: "pass"
+holoPct: 3
+goldPct: 20
+highLvl: 40
+monNodeConfig: "/home/mindspice/code/Java/Okra/okra-item-server/mon_chia_node.yaml"
+transactNodeConfig: "/home/mindspice/code/Java/Okra/okra-item-server/transact_chia_node.yaml"
+mintJobConfig: "/home/mindspice/code/Java/Okra/okra-item-server/mint_job_config.yaml"

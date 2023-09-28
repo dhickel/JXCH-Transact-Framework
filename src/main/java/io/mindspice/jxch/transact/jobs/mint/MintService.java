@@ -5,10 +5,9 @@ import io.mindspice.jxch.rpc.http.WalletAPI;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
-import io.mindspice.mindlib.data.Pair;
+import io.mindspice.mindlib.data.tuples.Pair;
 
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.*;
@@ -24,9 +23,9 @@ public abstract class MintService implements Runnable {
 
     protected final ConcurrentLinkedQueue<MintItem> mintQueue = new ConcurrentLinkedQueue<>();
 
-    protected boolean stopped = true;
-    protected ScheduledFuture<?> taskRef;
-    protected long lastTime;
+    protected volatile boolean stopped = true;
+    protected volatile ScheduledFuture<?> taskRef;
+    protected volatile long lastTime;
 
     public MintService(ScheduledExecutorService scheduledExecutor, JobConfig config, TLogger tLogger,
             FullNodeAPI nodeAPI, WalletAPI walletAPI) {
@@ -62,12 +61,14 @@ public abstract class MintService implements Runnable {
     }
 
     public boolean submit(MintItem item) {
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Received Mints: " + item);
         if (stopped) { return false; }
         mintQueue.add(item);
         return true;
     }
 
     public boolean submit(List<MintItem> items) {
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Received Mints: " + items);
         if (stopped) { return false; }
         mintQueue.addAll(items);
         return true;
@@ -85,6 +86,7 @@ public abstract class MintService implements Runnable {
         if (mintQueue.isEmpty()) {
             if (stopped) { terminate(); } else { return; }
         }
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Checking Queue");
 
         long nowTime = Instant.now().getEpochSecond();
         if (mintQueue.size() >= config.jobSize || nowTime - lastTime >= config.queueMaxWaitSec) {
