@@ -28,14 +28,15 @@ public abstract class TransactionService extends TService<TransactionItem> imple
     }
 
     @Override
+
     public void start() {
+        stopped = false;
         taskRef = executor.scheduleAtFixedRate(
                 this,
-                0,
+                10,
                 config.queueCheckInterval,
                 TimeUnit.SECONDS
         );
-        stopped = false;
         lastTime = Instant.now().getEpochSecond();
     }
 
@@ -78,11 +79,11 @@ public abstract class TransactionService extends TService<TransactionItem> imple
             if (queue.size() >= config.jobSize || nowTime - lastTime >= config.queueMaxWaitSec) {
                 lastTime = nowTime;
 
-                TransactionJob transactionJob = new TransactionJob(config, tLogger, nodeAPI, walletAPI, isCat);
                 List<TransactionItem> transactionItems = IntStream.range(0, Math.min(config.jobSize, queue.size()))
                         .mapToObj(i -> queue.poll())
                         .filter(Objects::nonNull).toList();
 
+                TransactionJob transactionJob = new TransactionJob(config, tLogger, nodeAPI, walletAPI, isCat);
                 transactionJob.addTransaction(transactionItems);
                 try {
                     currentJob = executor.submit(transactionJob);

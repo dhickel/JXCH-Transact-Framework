@@ -24,15 +24,14 @@ public abstract class MintService extends TService<MintItem> implements Runnable
         super(scheduledExecutor, config, tLogger, nodeAPI, walletAPI);
     }
 
-    @Override
     public void start() {
+        stopped = false;
         taskRef = executor.scheduleAtFixedRate(
                 this,
-                0,
+                10,
                 config.queueCheckInterval,
                 TimeUnit.SECONDS
         );
-        stopped = false;
         lastTime = Instant.now().getEpochSecond();
     }
 
