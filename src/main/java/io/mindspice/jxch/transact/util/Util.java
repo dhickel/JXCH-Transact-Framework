@@ -1,4 +1,4 @@
-package io.mindspice.jxch.transact;
+package io.mindspice.jxch.transact.util;
 
 import io.mindspice.jxch.rpc.schemas.object.Coin;
 import io.mindspice.jxch.transact.service.mint.MintItem;

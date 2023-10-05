@@ -2,12 +2,11 @@ package io.mindspice.jxch.transact.service.mint;
 
 import io.mindspice.jxch.rpc.http.FullNodeAPI;
 import io.mindspice.jxch.rpc.http.WalletAPI;
-import io.mindspice.jxch.transact.Util;
+import io.mindspice.jxch.transact.util.Util;
 import io.mindspice.jxch.transact.service.TService;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
-import io.mindspice.jxch.transact.util.Pair;
 
 import java.time.Instant;
 import java.util.List;
