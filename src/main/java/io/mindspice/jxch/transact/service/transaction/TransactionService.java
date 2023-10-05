@@ -1,16 +1,18 @@
-package io.mindspice.jxch.transact.jobs.transaction;
+package io.mindspice.jxch.transact.service.transaction;
 
 import io.mindspice.jxch.rpc.http.FullNodeAPI;
 import io.mindspice.jxch.rpc.http.WalletAPI;
-import io.mindspice.jxch.transact.jobs.TService;
+import io.mindspice.jxch.rpc.schemas.object.Coin;
+import io.mindspice.jxch.transact.Util;
+import io.mindspice.jxch.transact.service.TService;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
 import io.mindspice.mindlib.data.tuples.Pair;
 
-import java.sql.SQLOutput;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.*;
 import java.util.stream.IntStream;
@@ -19,7 +21,7 @@ import java.util.stream.IntStream;
 public abstract class TransactionService extends TService<TransactionItem> implements Runnable {
 
     protected final boolean isCat;
-    protected volatile Future<Pair<Boolean, List<TransactionItem>>> currentJob;
+    protected volatile Future<TransactionReturn> currentJob;
 
     public TransactionService(ScheduledExecutorService executor, JobConfig config, TLogger tLogger,
             FullNodeAPI nodeAPI, WalletAPI walletAPI, boolean isCat) {
@@ -61,7 +63,7 @@ public abstract class TransactionService extends TService<TransactionItem> imple
 
     // Override if you have actions that need performed on finished mints
     // returns the original items, as well as their on chain NFT Ids
-    protected abstract void onFinish(List<TransactionItem> transactionItems);
+    protected abstract void onFinish(Map<TransactionItem, Coin> txCoinMap);
 
     @Override
     public void run() {
@@ -87,11 +89,11 @@ public abstract class TransactionService extends TService<TransactionItem> imple
                 transactionJob.addTransaction(transactionItems);
                 try {
                     currentJob = executor.submit(transactionJob);
-                    Pair<Boolean, List<TransactionItem>> transactionResult = currentJob.get();
-                    if (transactionResult.first()) {
-                        onFinish(transactionResult.second());
+                    TransactionReturn transactionResult = currentJob.get();
+                    if (transactionResult.success()) {
+                        onFinish(Util.mapTransactions(transactionItems, transactionResult.newCoins()));
                     } else {
-                        onFail(transactionResult.second());
+                        onFail(transactionResult.transactionItems());
                     }
                 } catch (Exception ex) {
                     tLogger.log(this.getClass(), TLogLevel.ERROR,

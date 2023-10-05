@@ -1,4 +1,4 @@
-package io.mindspice.jxch.transact.jobs;
+package io.mindspice.jxch.transact.service;
 
 import io.mindspice.jxch.rpc.http.FullNodeAPI;
 import io.mindspice.jxch.rpc.http.WalletAPI;

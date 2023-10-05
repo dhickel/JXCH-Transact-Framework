@@ -1,7 +1,6 @@
 package io.mindspice.jxch.transact.settings;
 
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
-import io.mindspice.jxch.rpc.NodeConfig;
 
 import java.io.File;
 import java.io.IOException;

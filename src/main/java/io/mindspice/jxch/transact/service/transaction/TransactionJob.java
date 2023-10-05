@@ -1,4 +1,4 @@
-package io.mindspice.jxch.transact.jobs.transaction;
+package io.mindspice.jxch.transact.service.transaction;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -6,11 +6,12 @@ import io.mindspice.jxch.rpc.http.FullNodeAPI;
 import io.mindspice.jxch.rpc.http.WalletAPI;
 import io.mindspice.jxch.rpc.schemas.object.Coin;
 import io.mindspice.jxch.rpc.schemas.object.CoinRecord;
+import io.mindspice.jxch.rpc.schemas.object.CoinSpend;
 import io.mindspice.jxch.rpc.schemas.object.SpendBundle;
 import io.mindspice.jxch.rpc.util.ChiaUtils;
 import io.mindspice.jxch.rpc.util.RPCException;
 import io.mindspice.jxch.rpc.util.RequestUtils;
-import io.mindspice.jxch.transact.jobs.TJob;
+import io.mindspice.jxch.transact.service.TJob;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
@@ -21,7 +22,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 
-public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<TransactionItem>>> {
+public class TransactionJob extends TJob implements Callable<TransactionReturn> {
     private final List<TransactionItem> txItems;
     private final boolean isCat;
 
@@ -54,7 +55,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
     }
 
     @Override
-    public Pair<Boolean, List<TransactionItem>> call() throws Exception {
+    public TransactionReturn call() throws Exception {
         tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                 " | Started Transaction Job for Additions: " + txItems);
         startHeight = nodeAPI.getBlockChainState().data().orElseThrow(dataExcept).peak().height();
@@ -134,7 +135,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                                 " | Fee: " + feeAmount +
                                 " | Additions: " + txItems);
                         state = State.SUCCESS;
-                        return new Pair<>(true, txItems);
+                        return new TransactionReturn(true, txItems, assetBundle.coinSpends().stream().map(CoinSpend::coin).toList());
                     } else if (pushResponse.error().contains("INVALID_FEE_TOO_CLOSE_TO_ZERO")) {
                         tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
                                 " | Failed iteration: " + i + "/" + config.maxRetries +
@@ -171,7 +172,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                                 " | Fee: " + feeAmount +
                                 " | Additions: " + txItems);
                         state = State.SUCCESS;
-                        return new Pair<>(true, txItems);
+                        return new TransactionReturn(true, txItems, assetBundle.coinSpends().stream().map(CoinSpend::coin).toList());
                     } else {
                         incFee = config.incFeeOnFail;
                         tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
@@ -201,7 +202,8 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                 " | Status: Total Failure" +
                 " | Reason: All iteration failed.");
         state = State.FAILED;
-        return new Pair<>(false, txItems);
+        return new TransactionReturn(true, txItems, List.of());
+
     }
 
     private Pair<SpendBundle, List<Coin>> getAssetBundle() throws RPCException {

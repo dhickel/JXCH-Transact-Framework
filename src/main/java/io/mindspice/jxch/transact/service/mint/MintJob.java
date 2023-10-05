@@ -1,4 +1,4 @@
-package io.mindspice.jxch.transact.jobs.mint;
+package io.mindspice.jxch.transact.service.mint;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -12,7 +12,7 @@ import io.mindspice.jxch.rpc.schemas.wallet.nft.MetaData;
 import io.mindspice.jxch.rpc.util.ChiaUtils;
 import io.mindspice.jxch.rpc.util.RPCException;
 import io.mindspice.jxch.rpc.util.RequestUtils;
-import io.mindspice.jxch.transact.jobs.TJob;
+import io.mindspice.jxch.transact.service.TJob;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 
@@ -25,12 +25,12 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 
-public class MintJob extends TJob implements Callable<Pair<Boolean, List<String>>> {
+public class MintJob extends TJob implements Callable<MintReturn> {
     private final List<MintItem> mintItems;
 
     public MintJob(JobConfig config, TLogger tLogger, FullNodeAPI nodeAPI, WalletAPI walletAPI) {
         super(config, tLogger, nodeAPI, walletAPI);
-        mintItems =  new CopyOnWriteArrayList<>();
+        mintItems = new CopyOnWriteArrayList<>();
     }
 
     public void addMintItem(List<MintItem> mintItems) {
@@ -44,7 +44,7 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<String>
     }
 
     @Override
-    public Pair<Boolean, List<String>> call() throws Exception {
+    public MintReturn call() throws Exception {
         List<String> mintIds = mintItems.stream().map(MintItem::uuid).toList();
         tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                 " | Started Mint Job for NFT UUIDs: " + mintIds);
@@ -69,7 +69,6 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<String>
 
             SpendBundle aggBundle = walletAPI.aggregateSpends(List.of(nftSpendBundle, feeBundle))
                     .data().orElseThrow(dataExcept);
-
 
             tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                     " | Mint Coin: " + ChiaUtils.getCoinId(mintCoin) +
@@ -144,7 +143,7 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<String>
                                 " | Fee: " + feeAmount +
                                 " | Minted UUIDs: " + mintIds);
                         state = State.SUCCESS;
-                        return new Pair<>(true, nftList);
+                        return new MintReturn(true, mintItems, nftList);
                     } else if (pushResponse.error().contains("INVALID_FEE_TOO_CLOSE_TO_ZERO")) {
                         tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                                 " | Failed iteration: " + i + "/" + config.maxRetries +
@@ -186,7 +185,7 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<String>
                                 " | Fee: " + feeAmount +
                                 " | Minted UUIDs: " + mintIds);
                         state = State.SUCCESS;
-                        return new Pair<>(true, nftList);
+                        return new MintReturn(true, mintItems, nftList);
                     } else {
                         incFee = config.incFeeOnFail;
                         tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
@@ -219,7 +218,7 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<String>
                 " | Status: Total Failure" +
                 " | Reason: All iteration failed.");
         state = State.FAILED;
-        return new Pair<>(false, mintIds);
+        return new MintReturn(true, mintItems, List.of());
     }
 
     private Pair<NftBundle, Coin> getMintBundle() throws Exception {
@@ -282,7 +281,6 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<String>
                 .data()
                 .orElseThrow(dataExcept)
                 .coinId();
-
 
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: GettingDIDCoin:didGetInfo");
