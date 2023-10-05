@@ -1,7 +1,6 @@
-package io.mindspice.jxch.transact.jobs.transaction;
+package io.mindspice.jxch.transact.service.transaction;
 
 import io.mindspice.jxch.rpc.schemas.wallet.Addition;
-import io.mindspice.jxch.transact.jobs.mint.MintItem;
 
 import java.util.UUID;
 

@@ -1,4 +1,4 @@
-package io.mindspice.jxch.transact.jobs.mint;
+package io.mindspice.jxch.transact.service.mint;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
