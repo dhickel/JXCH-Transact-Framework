@@ -1,28 +1,32 @@
 package io.mindspice.jxch.transact.settings;
 
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
-import io.mindspice.jxch.rpc.NodeConfig;
 
 import java.io.File;
 import java.io.IOException;
 
 
 public class JobConfig {
-    public int didWalletId;
+    // Wallets
     public int feeWalletId;
     public int mintWalletId;
-    public int assetWalletId;
-    public int fundWallet;
-    public int minFeePerCost;
-    public int maxFeePerCost;
-    public String mintChangeTarget;
-    public int maxRetries = 100;
-    public int feeIncInterval = 10;
-    public int retryWaitInterval = 45000;
-    public boolean incFeeOnFail = true;
-    public int queueMaxWaitSec = 120;
-    public int queueCheckInterval;
-    public int jobSize;
+    public int didWalletId;
+    public int fundWalletId;
+    public boolean isTestnet = false;
+    public boolean mintFromDid;
+    public String royaltyTarget;
+    public int royaltyPercentage = 0;
+    public volatile int minFeePerCost;
+    public volatile int maxFeePerCost;
+    public String changeTarget;
+    public volatile int maxRetries = 100;
+    public volatile int feeIncInterval = 10;
+    public volatile int retryWaitInterval = 45000;
+    public volatile boolean incFeeOnFail = true;
+    public volatile int queueMaxWaitSec = 120;
+    public volatile int queueCheckInterval;
+    public volatile int jobSize;
+
 
     public static JobConfig loadConfig(String configPath) throws IOException {
         YAMLMapper mapper = new YAMLMapper();

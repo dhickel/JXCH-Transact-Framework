@@ -1,4 +1,4 @@
-package io.mindspice.jxch.transact.jobs.transaction;
+package io.mindspice.jxch.transact.service.transaction;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -6,13 +6,15 @@ import io.mindspice.jxch.rpc.http.FullNodeAPI;
 import io.mindspice.jxch.rpc.http.WalletAPI;
 import io.mindspice.jxch.rpc.schemas.object.Coin;
 import io.mindspice.jxch.rpc.schemas.object.CoinRecord;
+import io.mindspice.jxch.rpc.schemas.object.CoinSpend;
 import io.mindspice.jxch.rpc.schemas.object.SpendBundle;
 import io.mindspice.jxch.rpc.util.ChiaUtils;
 import io.mindspice.jxch.rpc.util.RPCException;
 import io.mindspice.jxch.rpc.util.RequestUtils;
-import io.mindspice.jxch.transact.jobs.TJob;
+import io.mindspice.jxch.transact.service.TJob;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
+import io.mindspice.jxch.transact.service.mint.MintItem;
 import io.mindspice.jxch.transact.settings.JobConfig;
 import io.mindspice.jxch.transact.util.Pair;
 
@@ -57,7 +59,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
     public Pair<Boolean, List<TransactionItem>> call() throws Exception {
         tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                 " | Started Transaction Job for Additions: " + txItems);
-        startHeight = nodeAPI.getBlockChainState().data().orElseThrow(dataExcept).peak().height();
+        startHeight = nodeAPI.getHeight().data().orElseThrow(dataExcept("NodeAPI.getHeight"));
 
         boolean incFee = false;
 
@@ -74,7 +76,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
             excludedCoins.add(feeCoin);
             SpendBundle feeBundle = getFeeBundle(feeCoin, feeAmount);
             SpendBundle aggBundle = walletAPI.aggregateSpends(List.of(assetBundle, feeBundle))
-                    .data().orElseThrow(dataExcept);
+                    .data().orElseThrow(dataExcept("WalletAPI.aggregateSpends"));
 
             tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                     " | Parent Coins: " + parentCoins.stream().map(ChiaUtils::getCoinId).toList() +
@@ -86,7 +88,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                         " | Action: transactionIteration: " + i);
 
                 // Spin until sync
-                while (!walletAPI.getSyncStatus().data().orElseThrow(dataExcept).synced()) {
+                while (!walletAPI.getSyncStatus().data().orElseThrow(dataExcept("WalletAPI.getSyncStatus")).synced()) {
                     state = State.AWAITING_SYNC;
                     tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                             " | Failed iteration: " + i + "/" + config.maxRetries +
@@ -97,23 +99,23 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                 state = i == 0 ? State.STARTED : State.RETRYING;
 
                 if (i != 0 && !(feePerCost >= config.maxFeePerCost)) {
+                    if (i % config.feeIncInterval == 0 || incFee) {
+                        long currFeePerCost = getFeePerCostNeeded(bundleCost);
+                        long baseFpc = Math.max(currFeePerCost, 5);
+                        long incValue = (i / config.feeIncInterval);
+                        long incFpc = baseFpc + incValue;
+                        feePerCost = Math.min(incFpc, config.maxFeePerCost);
+                        feeAmount = feePerCost * bundleCost;
+                        incFee = false;
 
-                    long currFeePerCost = getFeePerCostNeeded(bundleCost);
-                    if (currFeePerCost > feePerCost) {
-                        if (i % config.feeIncInterval == 0 || incFee) {
-                            feeAmount = currFeePerCost + (5L * (long) (i / config.feeIncInterval)) * bundleCost;
-                            incFee = false;
-                        } else {
-                            feeAmount = currFeePerCost * bundleCost;
-                        }
+                        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                                " | Action: FeeReCalc" +
+                                " | FeePerCost: " + feePerCost +
+                                " | totalFee: " + feeAmount);
+                        feeBundle = getFeeBundle(feeCoin, feeAmount);
+                        aggBundle = walletAPI.aggregateSpends(List.of(assetBundle, feeBundle))
+                                .data().orElseThrow(dataExcept("WalletAPI.aggregateSpends"));
                     }
-                    tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
-                            " | Action: FeeReCalc" +
-                            " | FeePerCost: " + feePerCost +
-                            " | totalFee: " + feePerCost * bundleCost);
-                    feeBundle = getFeeBundle(feeCoin, feeAmount);
-                    aggBundle = walletAPI.aggregateSpends(List.of(assetBundle, feeBundle))
-                            .data().orElseThrow(dataExcept);
                 }
 
                 tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
@@ -134,7 +136,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                                 " | Fee: " + feeAmount +
                                 " | Additions: " + txItems);
                         state = State.SUCCESS;
-                        return new Pair<>(true, txItems);
+                        return new Pair<>(true, getReturn(assetBundle.coinSpends().stream().map(CoinSpend::coin).toList()));
                     } else if (pushResponse.error().contains("INVALID_FEE_TOO_CLOSE_TO_ZERO")) {
                         tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
                                 " | Failed iteration: " + i + "/" + config.maxRetries +
@@ -148,13 +150,13 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                 }
 
                 Pair<Boolean, String> txResponse =
-                        checkMempoolForTx(pushResponse.data().orElseThrow(dataExcept).spendBundleName());
+                        checkMempoolForTx(pushResponse.data().orElseThrow(dataExcept("checkMempoolForTx")).spendBundleName());
 
                 int waitReps = 0;
                 while (waitReps < 10 && !txResponse.first()) {
                     Thread.sleep(5000);
                     waitReps++;
-                    txResponse = checkMempoolForTx(pushResponse.data().orElseThrow(dataExcept).spendBundleName());
+                    txResponse = checkMempoolForTx(pushResponse.data().orElseThrow(dataExcept("checkMempoolForTx")).spendBundleName());
                     tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                             " | Transaction State: Awaiting mempool detection" +
                             " | Wait Iteration: " + waitReps +
@@ -171,7 +173,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                                 " | Fee: " + feeAmount +
                                 " | Additions: " + txItems);
                         state = State.SUCCESS;
-                        return new Pair<>(true, txItems);
+                        return new Pair<>(true, getReturn(assetBundle.coinSpends().stream().map(CoinSpend::coin).toList()));
                     } else {
                         incFee = config.incFeeOnFail;
                         tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
@@ -201,7 +203,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                 " | Status: Total Failure" +
                 " | Reason: All iteration failed.");
         state = State.FAILED;
-        return new Pair<>(false, txItems);
+        return new Pair<>(true, txItems);
     }
 
     private Pair<SpendBundle, List<Coin>> getAssetBundle() throws RPCException {
@@ -211,7 +213,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
         SpendBundle spendBundle = null;
 
         JsonNode coinReq = new RequestUtils.SpendableCoinBuilder()
-                .setWalletId(config.assetWalletId)
+                .setWalletId(config.fundWalletId)
                 .setExcludedCoins(excludedCoins)
                 .build();
 
@@ -219,7 +221,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                 " | Action: getAssetBundle:getSpendableCoins");
 
         List<Coin> spendableCoins = walletAPI.getSpendableCoins(coinReq)
-                .data().orElseThrow(dataExcept)
+                .data().orElseThrow(dataExcept("WalletAPI.getSpendableCoins"))
                 .confirmedRecords()
                 .stream().map(CoinRecord::coin)
                 .sorted(Comparator.comparingLong(Coin::amount).reversed())
@@ -237,7 +239,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
         excludedCoins.addAll(txCoins);
 
         JsonNode xchSpendRequest = new RequestUtils.SignedTransactionBuilder()
-                .setWalletId(config.assetWalletId)
+                .setWalletId(config.fundWalletId)
                 .addAdditions(txItems.stream().map(TransactionItem::addition).toList())
                 .addCoin(txCoins)
                 .build();
@@ -246,7 +248,15 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                 " | Action: getAssetBundle:createSignedTransaction");
 
         spendBundle = walletAPI.createSignedTransaction(xchSpendRequest)
-                .data().orElseThrow(dataExcept).spendBundle();
+                .data().orElseThrow(dataExcept("WalletAPI.createSignedTransaction")).spendBundle();
         return new Pair<>(spendBundle, txCoins);
+    }
+
+    private List<TransactionItem> getReturn(List<Coin> coins) {
+        List<TransactionItem> rtnList = new ArrayList<>(txItems.size());
+        for (int i = 0; i < txItems.size(); ++i) {
+            rtnList.add(txItems.get(i).withCoin(coins.get(i)));
+        }
+        return rtnList;
     }
 }

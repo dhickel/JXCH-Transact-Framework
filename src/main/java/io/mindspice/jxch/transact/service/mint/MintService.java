@@ -1,43 +1,41 @@
-package io.mindspice.jxch.transact.jobs.transaction;
+package io.mindspice.jxch.transact.service.mint;
 
 import io.mindspice.jxch.rpc.http.FullNodeAPI;
 import io.mindspice.jxch.rpc.http.WalletAPI;
-import io.mindspice.jxch.transact.jobs.TService;
+import io.mindspice.jxch.transact.service.TService;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
 import io.mindspice.jxch.transact.util.Pair;
 
-import java.sql.SQLOutput;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.*;
 import java.util.stream.IntStream;
 
 
-public abstract class TransactionService extends TService<TransactionItem> implements Runnable {
+public abstract class MintService extends TService<MintItem> implements Runnable {
 
-    protected final boolean isCat;
-    protected volatile Future<Pair<Boolean, List<TransactionItem>>> currentJob;
+    protected volatile Future<Pair<Boolean, List<MintItem>>> currentJob;
 
-    public TransactionService(ScheduledExecutorService executor, JobConfig config, TLogger tLogger,
-            FullNodeAPI nodeAPI, WalletAPI walletAPI, boolean isCat) {
-        super(executor, config, tLogger, nodeAPI, walletAPI);
-        this.isCat = isCat;
+    public MintService(ScheduledExecutorService scheduledExecutor, JobConfig config, TLogger tLogger,
+            FullNodeAPI nodeAPI, WalletAPI walletAPI) {
+        super(scheduledExecutor, config, tLogger, nodeAPI, walletAPI);
     }
 
-    @Override
     public void start() {
         stopped = false;
         taskRef = executor.scheduleAtFixedRate(
                 this,
-                10,
+                config.queueCheckInterval,
                 config.queueCheckInterval,
                 TimeUnit.SECONDS
         );
         lastTime = Instant.now().getEpochSecond();
     }
+
     @Override
     public boolean stopAndBlock() {
         stopped = true;
@@ -55,47 +53,42 @@ public abstract class TransactionService extends TService<TransactionItem> imple
     }
 
     // Override to handle what to do with failed mints
-    protected abstract void onFail(List<TransactionItem> transactionItems);
+    protected abstract void onFail(List<MintItem> mintItems);
 
     // Override if you have actions that need performed on finished mints
     // returns the original items, as well as their on chain NFT Ids
-    protected abstract void onFinish(List<TransactionItem> transactionItems);
+    protected abstract void onFinish(List<MintItem> mintItemsWithIds);
 
-    @Override
     public void run() {
-
         try {
             if (queue.isEmpty()) {
-                if (stopped) {
-                    terminate();
-                } else {
-                    return;
-                }
+                if (stopped) { terminate(); } else { return; }
             }
+            tLogger.log(this.getClass(), TLogLevel.DEBUG, "Checking Queue");
 
             long nowTime = Instant.now().getEpochSecond();
             if (queue.size() >= config.jobSize || nowTime - lastTime >= config.queueMaxWaitSec) {
                 lastTime = nowTime;
 
-                TransactionJob transactionJob = new TransactionJob(config, tLogger, nodeAPI, walletAPI, isCat);
-                List<TransactionItem> transactionItems = IntStream.range(0, Math.min(config.jobSize, queue.size()))
+                MintJob mintJob = new MintJob(config, tLogger, nodeAPI, walletAPI);
+                List<MintItem> mintItems = IntStream.range(0, Math.min(config.jobSize, queue.size()))
                         .mapToObj(i -> queue.poll())
                         .filter(Objects::nonNull).toList();
 
-                transactionJob.addTransaction(transactionItems);
+                mintJob.addMintItem(mintItems);
                 try {
-                    currentJob = executor.submit(transactionJob);
-                    Pair<Boolean, List<TransactionItem>> transactionResult = currentJob.get();
-                    if (transactionResult.first()) {
-                        onFinish(transactionResult.second());
+                    currentJob = executor.submit(mintJob);
+                    var mintReturn = currentJob.get();
+                    if (mintReturn.first()) {
+                        onFinish(mintReturn.second());
                     } else {
-                        onFail(transactionResult.second());
+                        onFail(mintReturn.second());
                     }
                 } catch (Exception ex) {
                     tLogger.log(this.getClass(), TLogLevel.ERROR,
-                            "TransactionJob: " + transactionJob.getJobId() + " Failed" +
+                            "MintJob: " + mintJob.getJobId() + " Failed" +
                                     " | Exception: " + ex.getMessage(), ex);
-                    onFail(transactionItems);
+                    onFail(mintItems);
                 }
             }
         } catch (Exception e) {
@@ -103,3 +96,5 @@ public abstract class TransactionService extends TService<TransactionItem> imple
         }
     }
 }
+
+

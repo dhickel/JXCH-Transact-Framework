@@ -1,4 +1,4 @@
-package io.mindspice.jxch.transact.jobs;
+package io.mindspice.jxch.transact.service;
 
 import io.mindspice.jxch.rpc.http.FullNodeAPI;
 import io.mindspice.jxch.rpc.http.WalletAPI;
@@ -56,7 +56,7 @@ public abstract class TService<T> {
     }
 
     public boolean submit(T item) {
-        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Received Items: " + item);
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Received Item: " + item);
         if (stopped) { return false; }
         queue.add(item);
         return true;

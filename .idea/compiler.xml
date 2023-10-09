@@ -7,6 +7,7 @@
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
         <module name="jxch-bulk-mint-framework" />
+        <module name="jxch-transact-framework" />
       </profile>
     </annotationProcessing>
   </component>
