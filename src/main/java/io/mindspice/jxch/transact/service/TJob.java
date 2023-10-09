@@ -165,13 +165,13 @@ public abstract class TJob {
             tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                     " | Spendbundle Name: " + bundleName);
 
-            Pair<Boolean, String> txResponse = checkMempoolForTx(bundleName);
+            boolean txFound = checkMempoolForTx(bundleName);
 
             int waitReps = 0;
-            while (waitReps < 10 && !txResponse.first()) {
+            while (waitReps < 10 && !txFound) {
                 Thread.sleep(5000);
                 waitReps++;
-                txResponse = checkMempoolForTx(bundleName);
+                txFound = checkMempoolForTx(bundleName);
                 tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                         " | Transaction State: Awaiting mempool detection" +
                         " | Wait Iteration: " + waitReps +
@@ -180,17 +180,17 @@ public abstract class TJob {
                         "with your node and/or node resources");
             }
 
-            if (txResponse.first()) {
+            if (txFound) {
                 state = State.AWAITING_CONFIRMATION;
                 tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                         " | Transaction State: In Mempool" +
-                        " | Transaction Id: " + txResponse.second());
+                        " | Transaction Id: " + bundleName);
 
                 boolean completed = waitForTxConfirmation(bundleName, tState.confirmCoin);
                 if (completed) {
                     tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                             " | Transaction State: Successful" +
-                            " | Transaction Id: " + txResponse.second() +
+                            " | Transaction Id: " + bundleName +
                             " | Fee: " + tState.feeAmount +
                             " | Item UUIDs: " + tState.itemIds);
                     state = State.SUCCESS;
@@ -198,9 +198,9 @@ public abstract class TJob {
                 } else {
                     tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                             " | Transaction State: Failed" +
-                            " | Transaction Id: " + txResponse.second() +
+                            " | Transaction Id: " + bundleName +
                             " | Iteration: " + i + "/" + config.maxRetries +
-                            " | Reason: Tx dropped from mempool without minting " +
+                            " | Reason: Tx dropped from mempool or confirm wait wait meet" +
                             " | Current Fee Per Cost: " + tState.feePerCost +
                             " | Retrying in " + config.retryWaitInterval + "ms");
                 }
@@ -217,17 +217,14 @@ public abstract class TJob {
         return false;
     }
 
-    protected Pair<Boolean, String> checkMempoolForTx(String sbHash) throws Exception {
+    protected boolean checkMempoolForTx(String sbHash) throws Exception {
 
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: checkingMempoolForTransaction");
-        Optional<String> txHash = nodeAPI.getAllMempoolItems().data()
+        return nodeAPI.getAllMempoolItems().data()
                 .orElseThrow(dataExcept("NodeAPI.getAllMempoolItems"))
                 .entrySet().stream()
-                .filter(e -> e.getValue().spendBundleName().equals(sbHash))
-                .map(Map.Entry::getKey)
-                .findFirst();
-        return txHash.map(s -> new Pair<>(true, s)).orElseGet(() -> new Pair<>(false, ""));
+                .anyMatch(e -> e.getValue().spendBundleName().equals(sbHash));
     }
 
     protected SpendBundle getFeeBundle(Coin feeCoin, long feeAmount) throws RPCException {
@@ -327,7 +324,7 @@ public abstract class TJob {
              Once we know it's not in the mempool, it needs to be confirmed
              the actual coin has been spent to confirm transaction as successful */
             ;
-            if (txClearedMempool(txId)) {
+            if (!checkMempoolForTx(txId)) {
                 Thread.sleep(10000); // Give the node a little wait time to update to be safe
                 var mintCoinRecord = nodeAPI.getCoinRecordByName(ChiaUtils.getCoinId(txParentCoin));
                 return mintCoinRecord.data().orElseThrow(dataExcept("NodeAPi.getCoinRecordsByName")).spent();
@@ -336,10 +333,10 @@ public abstract class TJob {
     }
 
     //eh, this method didn't seem reliable, better to just iterate the mempool
-    protected boolean txClearedMempool(String txId) throws RPCException {
-        var resp = nodeAPI.getMempoolItemByTxId(txId, true);
-        return resp.data().isEmpty();
-    }
+//    protected boolean txClearedMempool(String txId) throws RPCException {
+//        var resp = nodeAPI.getMempoolItemByTxId(txId, true);
+//        return resp.data().isEmpty();
+//    }
 
 
 }
