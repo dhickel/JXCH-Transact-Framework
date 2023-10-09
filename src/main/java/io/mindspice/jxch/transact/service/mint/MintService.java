@@ -2,7 +2,6 @@ package io.mindspice.jxch.transact.service.mint;
 
 import io.mindspice.jxch.rpc.http.FullNodeAPI;
 import io.mindspice.jxch.rpc.http.WalletAPI;
-import io.mindspice.jxch.transact.Util;
 import io.mindspice.jxch.transact.service.TService;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
@@ -19,7 +18,7 @@ import java.util.stream.IntStream;
 
 public abstract class MintService extends TService<MintItem> implements Runnable {
 
-    protected volatile Future<MintReturn> currentJob;
+    protected volatile Future<Pair<Boolean, List<MintItem>>> currentJob;
 
     public MintService(ScheduledExecutorService scheduledExecutor, JobConfig config, TLogger tLogger,
             FullNodeAPI nodeAPI, WalletAPI walletAPI) {
@@ -30,7 +29,7 @@ public abstract class MintService extends TService<MintItem> implements Runnable
         stopped = false;
         taskRef = executor.scheduleAtFixedRate(
                 this,
-                10,
+                config.queueCheckInterval,
                 config.queueCheckInterval,
                 TimeUnit.SECONDS
         );
@@ -58,10 +57,9 @@ public abstract class MintService extends TService<MintItem> implements Runnable
 
     // Override if you have actions that need performed on finished mints
     // returns the original items, as well as their on chain NFT Ids
-    protected abstract void onFinish(Map<MintItem, String> itemNftIdMap);
+    protected abstract void onFinish(List<MintItem> mintItemsWithIds);
 
     public void run() {
-
         try {
             if (queue.isEmpty()) {
                 if (stopped) { terminate(); } else { return; }
@@ -80,11 +78,11 @@ public abstract class MintService extends TService<MintItem> implements Runnable
                 mintJob.addMintItem(mintItems);
                 try {
                     currentJob = executor.submit(mintJob);
-                    MintReturn mintResult = currentJob.get();
-                    if (mintResult.success()) {
-                        onFinish(Util.mapMints(mintResult.mintItems(), mintResult.nftIds()));
+                    var mintReturn = currentJob.get();
+                    if (mintReturn.first()) {
+                        onFinish(mintReturn.second());
                     } else {
-                        onFail(mintResult.mintItems());
+                        onFail(mintReturn.second());
                     }
                 } catch (Exception ex) {
                     tLogger.log(this.getClass(), TLogLevel.ERROR,

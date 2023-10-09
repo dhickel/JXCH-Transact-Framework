@@ -19,7 +19,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
 
 
-public abstract class TJob {
+public abstract class TJob  {
 
     public enum State{
         INIT,
@@ -40,8 +40,11 @@ public abstract class TJob {
     protected volatile int startHeight;
     protected volatile State state = State.INIT;
 
-    protected final Supplier<RPCException> dataExcept =
-            () -> new RPCException("Required RPC call returned Optional.empty");
+    public static Supplier<RPCException> dataExcept(String msg) {
+        return () -> new RPCException("Required RPC call: " + msg + " returned Optional.empty");
+    }
+
+
 
     public TJob(JobConfig config, TLogger tLogger, FullNodeAPI nodeAPI, WalletAPI walletAPI) {
         this.config = config;
@@ -65,7 +68,8 @@ public abstract class TJob {
     protected Pair<Boolean, String> checkMempoolForTx(String sbHash) throws Exception {
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: checkingMempoolForTransaction");
-        Optional<String> txHash = nodeAPI.getAllMempoolItems().data().orElseThrow(dataExcept)
+        Optional<String> txHash = nodeAPI.getAllMempoolItems().data()
+                .orElseThrow(dataExcept("NodeAPI.getAllMempoolItems"))
                 .entrySet().stream()
                 .filter(e -> e.getValue().spendBundleName().equals(sbHash))
                 .map(Map.Entry::getKey)
@@ -77,25 +81,27 @@ public abstract class TJob {
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: gettingFeeBundle");
         JsonNode feeBundleReq = new RequestUtils.SignedTransactionBuilder()
-                .addAddition(config.mintChangeTarget, feeCoin.amount() - feeAmount) // return amount not used for fee
+                .addAddition(config.changeTarget, feeCoin.amount() - feeAmount) // return amount not used for fee
                 .addCoin(feeCoin)
                 .addFee(feeAmount)
                 .build();
 
-        return walletAPI.createSignedTransaction(feeBundleReq).data().orElseThrow(dataExcept).spendBundle();
+        return walletAPI.createSignedTransaction(feeBundleReq).data().
+                orElseThrow(dataExcept("WalletAPI.createSignedTransaction")).spendBundle();
     }
 
     protected long getSpendCost(SpendBundle spend) throws Exception {
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: gettingSpendBundleCost");
-        return nodeAPI.getSpendBundleInclusionCost(spend).data().orElseThrow(dataExcept).cost();
+        return nodeAPI.getSpendBundleInclusionCost(spend).data()
+                .orElseThrow(dataExcept("NodeApi.getSpendBundleInclusionCost")).cost();
     }
 
     protected long getFeePerCostNeeded(long cost) throws RPCException {
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: gettingFeePerCostNeeded");
         Map<String, MempoolItem> mempool =
-                nodeAPI.getAllMempoolItems().data().orElseThrow(dataExcept);
+                nodeAPI.getAllMempoolItems().data().orElseThrow(dataExcept("NodeAPI.getAllMempoolItems"));
 
         long totalMemCost = mempool.values().stream()
                 .mapToLong(MempoolItem::cost)
@@ -143,7 +149,7 @@ public abstract class TJob {
 
         return walletAPI.getSpendableCoins(jsonNode)
                 .data()
-                .orElseThrow(dataExcept)
+                .orElseThrow(dataExcept("WalletApi.getSpendableCoins"))
                 .confirmedRecords()
                 .stream().sorted(Comparator.comparing(c -> c.coin().amount()))
                 .toList()
@@ -154,20 +160,22 @@ public abstract class TJob {
         while (true) {
             tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                     " | Action: waitForConfirmation");
-            Thread.sleep(20000);
+            Thread.sleep(10000);
             /* getTxStatus returns true if tx is no longer in the mempool
              Once we know it's not in the mempool, it needs to be confirmed
              the actual coin has been spent to confirm mint as successful */
-            if (txClearedMempool(txId)) {
+            System.out.println("loop wait");
+            if (!checkMempoolForTx(txId).first()) {
+                Thread.sleep(10000);
                 var mintCoinRecord = nodeAPI.getCoinRecordByName(ChiaUtils.getCoinId(txParentCoin));
-                return mintCoinRecord.data().orElseThrow(dataExcept).spent();
+                return mintCoinRecord.data().orElseThrow(dataExcept("NodeAPi.getCoinRecordsByName")).spent();
             }
         }
     }
 
     //todo test if there is an actual data object still returned when not found
     protected boolean txClearedMempool(String txId) throws RPCException {
-        var resp = nodeAPI.getMempoolItemByTxId(txId);
+        var resp = nodeAPI.getMempoolItemByTxId(txId, true);
         return resp.data().isEmpty();
     }
 

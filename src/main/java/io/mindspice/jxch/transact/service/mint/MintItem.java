@@ -8,18 +8,27 @@ import java.util.UUID;
 
 
 public record MintItem(
-        @JsonAlias({"target_address", "targetAddress"})
-        @JsonProperty("target_address") String targetAddress,
-        @JsonAlias({"meta_data", "metaData"})
-        @JsonProperty("meta_data") MetaData metaData,
-        @JsonProperty("uuid") String uuid
+        String targetAddress,
+        MetaData metaData,
+        String uuid,
+        String nftId
 ) {
 
-        public MintItem(String targetAddress, MetaData metaData) {
-                this(targetAddress, metaData, UUID.randomUUID().toString());
-        }
+    public MintItem(String targetAddress, MetaData metaData) {
+        this(targetAddress, metaData, UUID.randomUUID().toString(), null);
+    }
 
-        public MintItem {
-                if (uuid == null) { uuid = UUID.randomUUID().toString(); }
-        }
+    public MintItem(String targetAddress, MetaData metaData, String uuid) {
+        this(targetAddress, metaData, uuid, null);
+    }
+
+    public MintItem withNftId(String nftId) {
+        return new MintItem(
+                this.targetAddress,
+                this.metaData,
+                this.uuid,
+                nftId
+        );
+    }
+
 }
