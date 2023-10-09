@@ -63,20 +63,23 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
         boolean incFee = false;
 
         try {
-            Pair<SpendBundle, List<Coin>> assetData = getAssetBundle();
-            excludedCoins.addAll(assetData.second());
-            SpendBundle assetBundle = assetData.first();
+            SpendBundle assetBundle = getAssetBundle();
             long bundleCost = getSpendCost(assetBundle);
             long feePerCost = Math.min(getFeePerCostNeeded(bundleCost), config.maxFeePerCost);
             long feeAmount = feePerCost * bundleCost;
-            List<Coin> createdCoins = assetBundle.coinSpends()
 
             // Get max so coin can be reused for all fee calculations
             Coin feeCoin = getFeeCoin(bundleCost * config.maxFeePerCost, excludedCoins);
             excludedCoins.add(feeCoin);
-            SpendBundle feeBundle = getFeeBundle(feeCoin, feeAmount);
-            SpendBundle aggBundle = walletAPI.aggregateSpends(List.of(assetBundle, feeBundle))
-                    .data().orElseThrow(dataExcept("WalletAPI.aggregateSpends"));
+
+            SpendBundle aggBundle;
+            if (feeAmount != 0) {
+                SpendBundle feeBundle = getFeeBundle(feeCoin, feeAmount);
+                aggBundle = walletAPI.aggregateSpends(List.of(assetBundle, feeBundle))
+                        .data().orElseThrow(dataExcept("WalletAPI.aggregateSpends"));
+            } else {
+                aggBundle = assetBundle;
+            }
 
             tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                     " | Parent Coins: " + parentCoins.stream().map(ChiaUtils::getCoinId).toList() +
@@ -92,7 +95,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                     feeCoin,
                     assetBundle,
                     aggBundle,
-                    assetData.second().get(0)
+                    excludedCoins.get(0)
             );
             boolean success = transactionLoop(tState);
             if (!success) {
@@ -101,7 +104,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                         " | Reason: All iteration failed.");
                 state = State.FAILED;
             }
-            return new Pair<>(success, success ? getReturn(assetData.second()) : txItems);
+            return new Pair<>(success, success ? getReturn(createdCoins) : txItems);
 
         } catch (Exception ex) {
             tLogger.log(this.getClass(), TLogLevel.FAILED, "Job: " + jobId +
@@ -112,7 +115,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
         }
     }
 
-    private Pair<SpendBundle, List<Coin>> getAssetBundle() throws RPCException {
+    private SpendBundle getAssetBundle() throws RPCException {
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: getAssetBundle");
         long totalAmount = txItems.stream().mapToLong(i -> i.addition().amount()).sum();
@@ -156,7 +159,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                 .data().orElseThrow(dataExcept("WalletAPI.createSignedTransaction"));
 
         createdCoins = signedTransaction.additions();
-        return new Pair<>(signedTransaction.spendBundle(), signedTransaction.);
+        return signedTransaction.spendBundle();
     }
 
     private List<TransactionItem> getReturn(List<Coin> coins) {
