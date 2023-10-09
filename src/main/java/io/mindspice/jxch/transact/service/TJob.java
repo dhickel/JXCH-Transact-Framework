@@ -306,6 +306,8 @@ public abstract class TJob {
                 long nowTime = Instant.now().getEpochSecond();
                 if (nowTime - waitStartTime > config.maxConfirmWait) {
                     if (config.incFeeOnFail) { tState.incFee = true; }
+                    tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                            " | Re-submitting due to max confirm wait(" + config.maxConfirmWait + "s)");
                     return false;
                 }
             }
