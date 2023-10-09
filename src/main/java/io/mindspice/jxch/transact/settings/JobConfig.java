@@ -25,6 +25,7 @@ public class JobConfig {
     public volatile boolean incFeeOnFail = true;
     public volatile int queueMaxWaitSec = 120;
     public volatile int queueCheckInterval;
+    public volatile int maxConfirmWait = -1;
     public volatile int jobSize;
 
 

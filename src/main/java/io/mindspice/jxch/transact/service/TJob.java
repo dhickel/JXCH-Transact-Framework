@@ -14,14 +14,15 @@ import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
 import io.mindspice.jxch.transact.util.Pair;
 
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
 
 
-public abstract class TJob  {
+public abstract class TJob {
 
-    public enum State{
+    public enum State {
         INIT,
         AWAITING_SYNC,
         AWAITING_CONFIRMATION,
@@ -31,20 +32,21 @@ public abstract class TJob  {
         SUCCESS,
         FAILED
     }
+
+
     protected final JobConfig config;
     protected final TLogger tLogger;
     protected final WalletAPI walletAPI;
     protected final FullNodeAPI nodeAPI;
     protected final String jobId = UUID.randomUUID().toString();
-    protected final List<Coin> excludedCoins =  new CopyOnWriteArrayList<>();
+    protected final List<Coin> excludedCoins = new CopyOnWriteArrayList<>();
     protected volatile int startHeight;
     protected volatile State state = State.INIT;
+    protected TransactionState tState;
 
     public static Supplier<RPCException> dataExcept(String msg) {
         return () -> new RPCException("Required RPC call: " + msg + " returned Optional.empty");
     }
-
-
 
     public TJob(JobConfig config, TLogger tLogger, FullNodeAPI nodeAPI, WalletAPI walletAPI) {
         this.config = config;
@@ -63,6 +65,147 @@ public abstract class TJob  {
 
     public String getJobId() {
         return jobId;
+    }
+
+    // Main loop, will keep trying until a successful mint, or until max reties are hit,
+    //  recalculating the fee every iteration incrementing additionally as per config
+    public boolean transactionLoop(TransactionState tState) throws Exception {
+        this.tState = tState;
+        for (int i = 0; i < config.maxRetries; ++i) {
+            tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                    " | Action: StartingMintIteration: " + i +
+                    " | FeePerCost: " + tState.feePerCost +
+                    " | totalFee: " + tState.feePerCost * tState.bundleCost);
+
+            // Spin until sync
+            while (!walletAPI.getSyncStatus().data().orElseThrow(dataExcept("WalletAPI.getSyncStatus")).synced()) {
+                state = State.AWAITING_SYNC;
+                tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                        " | Failed iteration: " + i + "/" + config.maxRetries +
+                        " | Reason: Wallet " + config.mintWalletId + " not Synced" +
+                        " | Retrying in " + config.retryWaitInterval + "ms");
+                Thread.sleep(config.retryWaitInterval);
+            }
+            state = i == 0 ? State.STARTED : State.RETRYING;
+
+            if (i != 0 && tState.feePerCost < config.maxFeePerCost) {
+                if (i % config.feeIncInterval == 0 || tState.incFee) {
+                    long currFeePerCost = getFeePerCostNeeded(tState.bundleCost);
+                    long baseFpc = Math.max(currFeePerCost, 5);
+                    long incValue = (i / config.feeIncInterval);
+                    long incFpc = baseFpc + incValue;
+                    tState.feePerCost = Math.min(incFpc, config.maxFeePerCost);
+                    tState.feeAmount = tState.feePerCost * tState.bundleCost;
+                    tState.incFee = false;
+
+                    tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                            " | Action: FeeReCalc" +
+                            " | FeePerCost: " + tState.feePerCost +
+                            " | totalFee: " + tState.feeAmount);
+
+                    if (tState.feeAmount != 0) {
+                        SpendBundle feeBundle = getFeeBundle(tState.feeCoin, tState.feeAmount);
+                        tState.aggBundle = walletAPI.aggregateSpends(List.of(tState.transactionBundle, feeBundle))
+                                .data().orElseThrow(dataExcept("WalletAPI.aggregateSpends"));
+                    }
+                }
+            }
+
+            tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                    " | Action: PushingTransaction");
+            var pushResponse = nodeAPI.pushTx(tState.aggBundle);
+
+            if (!pushResponse.success()) {
+                // Consider transaction a success if the coin id related to it is spent this means the transaction
+                // submission from a past iteration was successful and not recognized due to network delay or the coin
+                // was spent elsewhere as the result of user error.
+                if ((pushResponse.error().contains("DOUBLE_SPEND"))) {
+                    if (i == 0) {
+                        tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
+                                " | Job: " + jobId + " Failed (DOUBLE_SPEND) on first iteration." +
+                                " | Note:  Double spend can be due to a past successful transaction being " +
+                                "re-submitted, but this would never occur on a first iteration" +
+                                " | Fee: " + tState.feeAmount +
+                                " | Item UUIDs: " + tState.itemIds);
+                        throw new IllegalStateException("Double spend on first iteration");
+                    }
+                    tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                            " | Performed a DOUBLE_SPEND, job consider successful. This error can be ignored, " +
+                            "but could result in a failed job if the coin was spent elsewhere due to user error.");
+
+                    tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                            " | Job: " + jobId + " Successful (DOUBLE_SPEND)" +
+                            " | Fee: " + tState.feeAmount +
+                            " | Item UUIDs: " + tState.itemIds);
+                    state = State.SUCCESS;
+
+                    return true;
+                } else if (pushResponse.error().contains("INVALID_FEE_TOO_CLOSE_TO_ZERO")) {
+                    tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                            " | Failed iteration: " + i + "/" + config.maxRetries +
+                            " | Reason: INVALID_FEE_TOO_CLOSE_TO_ZERO " +
+                            " | Current Fee Per Cost: " + tState.feePerCost +
+                            " | Retrying in " + config.retryWaitInterval + "ms");
+                    Thread.sleep(config.retryWaitInterval);
+                    tState.incFee = config.incFeeOnFail;
+                    continue;
+                }
+            }
+
+            String bundleName = pushResponse.data().orElseThrow(dataExcept("checkMempoolForTx")).spendBundleName();
+
+            Pair<Boolean, String> txResponse = checkMempoolForTx(bundleName);
+            tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                    " | SpendBundle Name: " + bundleName);
+
+            int waitReps = 0;
+            while (waitReps < 10 && !txResponse.first()) {
+                Thread.sleep(5000);
+                waitReps++;
+                txResponse = checkMempoolForTx(bundleName);
+                tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                        " | Transaction State: Awaiting mempool detection" +
+                        " | Wait Iteration: " + waitReps +
+                        " | TransactionId: " + bundleName +
+                        " | Note: This can happen occasionally but if occuring offten may be an issue " +
+                        "with your node and/or node resources");
+            }
+
+            if (txResponse.first()) {
+                state = State.AWAITING_CONFIRMATION;
+                tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                        " | Transaction State: In Mempool" +
+                        " | Transaction Id: " + txResponse.second());
+
+                boolean completed = waitForTxConfirmation(bundleName, tState.confirmCoin);
+                if (completed) {
+                    tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                            " | Transaction State: Successful" +
+                            " | Transaction Id: " + txResponse.second() +
+                            " | Fee: " + tState.feeAmount +
+                            " | Minted UUIDs: " + tState.itemIds);
+                    state = State.SUCCESS;
+                    return true;
+                } else {
+                    tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                            " | Transaction State: Failed" +
+                            " | Transaction Id: " + txResponse.second() +
+                            " | Iteration: " + i + "/" + config.maxRetries +
+                            " | Reason: Tx dropped from mempool without minting " +
+                            " | Current Fee Per Cost: " + tState.feePerCost +
+                            " | Retrying in " + config.retryWaitInterval + "ms");
+                }
+            } else {
+                tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                        " | Transaction State: Failed to locate tx in mempool" +
+                        " | Iteration: " + i + "/" + config.maxRetries +
+                        " | Current Fee Per Cost: " + tState.feePerCost +
+                        " | Retrying in " + config.retryWaitInterval + "ms");
+            }
+            state = State.RETRYING;
+            Thread.sleep(config.retryWaitInterval);
+        }
+        return false;
     }
 
     protected Pair<Boolean, String> checkMempoolForTx(String sbHash) throws Exception {
@@ -157,28 +300,35 @@ public abstract class TJob  {
     }
 
     protected boolean waitForTxConfirmation(String txId, Coin txParentCoin) throws Exception {
+        long waitStartTime = Instant.now().getEpochSecond();
         while (true) {
+            if (config.maxConfirmWait > 0) {
+                long nowTime = Instant.now().getEpochSecond();
+                if (nowTime - waitStartTime > config.maxConfirmWait) {
+                    if (config.incFeeOnFail) { tState.incFee = true; }
+                    return false;
+                }
+            }
             tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                     " | Action: waitForConfirmation");
-            Thread.sleep(10000);
+            Thread.sleep(30000);
             /* getTxStatus returns true if tx is no longer in the mempool
              Once we know it's not in the mempool, it needs to be confirmed
-             the actual coin has been spent to confirm mint as successful */
-            System.out.println("loop wait");
+             the actual coin has been spent to confirm transaction as successful */
+            ;
             if (!checkMempoolForTx(txId).first()) {
-                Thread.sleep(10000);
+                Thread.sleep(10000); // Give the node a little wait time to update to be safe
                 var mintCoinRecord = nodeAPI.getCoinRecordByName(ChiaUtils.getCoinId(txParentCoin));
                 return mintCoinRecord.data().orElseThrow(dataExcept("NodeAPi.getCoinRecordsByName")).spent();
             }
         }
     }
 
-    //todo test if there is an actual data object still returned when not found
+    //eh, this method didn't seem reliable, better to just iterate the mempool
     protected boolean txClearedMempool(String txId) throws RPCException {
         var resp = nodeAPI.getMempoolItemByTxId(txId, true);
         return resp.data().isEmpty();
     }
-
 
 
 }

@@ -1,7 +1,5 @@
 package io.mindspice.jxch.transact.service.mint;
 
-import com.fasterxml.jackson.annotation.JsonAlias;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import io.mindspice.jxch.rpc.schemas.wallet.nft.MetaData;
 
 import java.util.UUID;
@@ -30,5 +28,4 @@ public record MintItem(
                 nftId
         );
     }
-
 }

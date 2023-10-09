@@ -2,7 +2,6 @@ package io.mindspice.jxch.transact.service.transaction;
 
 import io.mindspice.jxch.rpc.http.FullNodeAPI;
 import io.mindspice.jxch.rpc.http.WalletAPI;
-import io.mindspice.jxch.rpc.schemas.object.Coin;
 import io.mindspice.jxch.transact.service.TService;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
@@ -11,21 +10,17 @@ import io.mindspice.jxch.transact.util.Pair;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.*;
 import java.util.stream.IntStream;
 
 
 public abstract class TransactionService extends TService<TransactionItem> implements Runnable {
-
-    protected final boolean isCat;
     protected volatile Future<Pair<Boolean, List<TransactionItem>>> currentJob;
 
     public TransactionService(ScheduledExecutorService executor, JobConfig config, TLogger tLogger,
-            FullNodeAPI nodeAPI, WalletAPI walletAPI, boolean isCat) {
+            FullNodeAPI nodeAPI, WalletAPI walletAPI) {
         super(executor, config, tLogger, nodeAPI, walletAPI);
-        this.isCat = isCat;
     }
 
     @Override
@@ -40,6 +35,7 @@ public abstract class TransactionService extends TService<TransactionItem> imple
         );
         lastTime = Instant.now().getEpochSecond();
     }
+
     @Override
     public boolean stopAndBlock() {
         stopped = true;
@@ -60,7 +56,7 @@ public abstract class TransactionService extends TService<TransactionItem> imple
     protected abstract void onFail(List<TransactionItem> transactionItems);
 
     // Override if you have actions that need performed on finished mints
-    // returns the original items, as well as their on chain NFT Ids
+    // returns the original items, as well as their created coins
     protected abstract void onFinish(List<TransactionItem> txItemsWithCoins);
 
     @Override
@@ -83,11 +79,11 @@ public abstract class TransactionService extends TService<TransactionItem> imple
                         .mapToObj(i -> queue.poll())
                         .filter(Objects::nonNull).toList();
 
-                TransactionJob transactionJob = new TransactionJob(config, tLogger, nodeAPI, walletAPI, isCat);
+                TransactionJob transactionJob = new TransactionJob(config, tLogger, nodeAPI, walletAPI);
                 transactionJob.addTransaction(transactionItems);
                 try {
                     currentJob = executor.submit(transactionJob);
-                    var txReturn  = currentJob.get();
+                    var txReturn = currentJob.get();
                     if (txReturn.first()) {
                         onFinish(txReturn.second());
                     } else {
