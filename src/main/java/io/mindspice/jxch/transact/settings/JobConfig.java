@@ -22,7 +22,6 @@ public class JobConfig {
     public volatile int maxRetries = 100;
     public volatile int feeIncInterval = 10;
     public volatile int retryWaitInterval = 45000;
-    public volatile boolean incFeeOnFail = true;
     public volatile int queueMaxWaitSec = 120;
     public volatile int queueCheckInterval;
     public volatile int maxConfirmWait = -1;

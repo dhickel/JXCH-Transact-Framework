@@ -12,7 +12,7 @@ public class TransactionState {
     public long feePerCost;
     public long feeAmount;
     public final Coin feeCoin;
-    public boolean incFee = false;
+    public boolean needReplaceFee = false;
     public final SpendBundle transactionBundle;
     public SpendBundle aggBundle;
     public final Coin confirmCoin;
