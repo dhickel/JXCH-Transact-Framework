@@ -73,41 +73,44 @@ public abstract class TJob {
         this.tState = tState;
         for (int i = 0; i < config.maxRetries; ++i) {
             tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
-                    " | Action: StartingMintIteration: " + i +
-                    " | FeePerCost: " + tState.feePerCost +
-                    " | totalFee: " + tState.feePerCost * tState.bundleCost);
+                    " | Action: LoopIteration: " + i);
 
             // Spin until sync
             while (!walletAPI.getSyncStatus().data().orElseThrow(dataExcept("WalletAPI.getSyncStatus")).synced()) {
                 state = State.AWAITING_SYNC;
                 tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                         " | Failed iteration: " + i + "/" + config.maxRetries +
-                        " | Reason: Wallet " + config.mintWalletId + " not Synced" +
+                        " | Reason: Wallet  not Synced" +
                         " | Retrying in " + config.retryWaitInterval + "ms");
                 Thread.sleep(config.retryWaitInterval);
             }
             state = i == 0 ? State.STARTED : State.RETRYING;
 
-            if (i != 0 && tState.feePerCost < config.maxFeePerCost) {
-                if (i % config.feeIncInterval == 0 || tState.incFee) {
+            if (i != 0 && tState.feePerCost < config.maxFeePerCost
+                    && (i % config.feeIncInterval == 0 || tState.needReplaceFee)) {
+
+                if (tState.needReplaceFee) {
+                    tState.feePerCost = Math.min(tState.feePerCost + 5, config.maxFeePerCost);
+                    tState.feeAmount = tState.bundleCost * tState.feePerCost;
+                    tState.needReplaceFee = false;
+                } else {
                     long currFeePerCost = getFeePerCostNeeded(tState.bundleCost);
-                    long baseFpc = Math.max(currFeePerCost, 5);
+                    long baseFpc = Math.max(Math.max(currFeePerCost, 5), config.minFeePerCost);
                     long incValue = (i / config.feeIncInterval);
                     long incFpc = baseFpc + incValue;
                     tState.feePerCost = Math.min(incFpc, config.maxFeePerCost);
                     tState.feeAmount = tState.feePerCost * tState.bundleCost;
-                    tState.incFee = false;
+                }
 
-                    tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
-                            " | Action: FeeReCalc" +
-                            " | FeePerCost: " + tState.feePerCost +
-                            " | totalFee: " + tState.feeAmount);
+                tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                        " | Action: FeeReCalc" +
+                        " | FeePerCost: " + tState.feePerCost +
+                        " | totalFee: " + tState.feeAmount);
 
-                    if (tState.feeAmount != 0) {
-                        SpendBundle feeBundle = getFeeBundle(tState.feeCoin, tState.feeAmount);
-                        tState.aggBundle = walletAPI.aggregateSpends(List.of(tState.transactionBundle, feeBundle))
-                                .data().orElseThrow(dataExcept("WalletAPI.aggregateSpends"));
-                    }
+                if (tState.feeAmount != 0) {
+                    SpendBundle feeBundle = getFeeBundle(tState.feeCoin, tState.feeAmount);
+                    tState.aggBundle = walletAPI.aggregateSpends(List.of(tState.transactionBundle, feeBundle))
+                            .data().orElseThrow(dataExcept("WalletAPI.aggregateSpends"));
                 }
             }
 
@@ -147,16 +150,22 @@ public abstract class TJob {
                             " | Current Fee Per Cost: " + tState.feePerCost +
                             " | Retrying in " + config.retryWaitInterval + "ms");
                     Thread.sleep(config.retryWaitInterval);
-                    tState.incFee = config.incFeeOnFail;
                     continue;
                 }
+                tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
+                        " | Failed iteration: " + i + "/" + config.maxRetries +
+                        " | Reason: Unknown error on push " +
+                        " | Error:" + pushResponse.error() +
+                        " | Current Fee Per Cost: " + tState.feePerCost +
+                        " | Retrying in " + config.retryWaitInterval + "ms");
             }
 
-            String bundleName = pushResponse.data().orElseThrow(dataExcept("checkMempoolForTx")).spendBundleName();
+            String bundleName = pushResponse.data().orElseThrow(dataExcept("pushResponse")).spendBundleName();
+
+            tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                    " | Spendbundle Name: " + bundleName);
 
             Pair<Boolean, String> txResponse = checkMempoolForTx(bundleName);
-            tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
-                    " | SpendBundle Name: " + bundleName);
 
             int waitReps = 0;
             while (waitReps < 10 && !txResponse.first()) {
@@ -167,7 +176,7 @@ public abstract class TJob {
                         " | Transaction State: Awaiting mempool detection" +
                         " | Wait Iteration: " + waitReps +
                         " | TransactionId: " + bundleName +
-                        " | Note: This can happen occasionally but if occuring offten may be an issue " +
+                        " | Note: This can happen occasionally but if occurring often may be an issue " +
                         "with your node and/or node resources");
             }
 
@@ -183,7 +192,7 @@ public abstract class TJob {
                             " | Transaction State: Successful" +
                             " | Transaction Id: " + txResponse.second() +
                             " | Fee: " + tState.feeAmount +
-                            " | Minted UUIDs: " + tState.itemIds);
+                            " | Item UUIDs: " + tState.itemIds);
                     state = State.SUCCESS;
                     return true;
                 } else {
@@ -209,6 +218,7 @@ public abstract class TJob {
     }
 
     protected Pair<Boolean, String> checkMempoolForTx(String sbHash) throws Exception {
+
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: checkingMempoolForTransaction");
         Optional<String> txHash = nodeAPI.getAllMempoolItems().data()
@@ -268,17 +278,13 @@ public abstract class TJob {
                 }
             }
         }
-        if (feeNeeded < 5) {
-            return config.minFeePerCost;
-        } else {
-            return roundFpc(feeNeeded);
-        }
+        return feeNeeded;
     }
 
-    protected static long roundFpc(long i) {
-        var round = (i / 5) * 5;
-        return (i - round > 2) ? round + 5 : round;
-    }
+//    protected static long roundFpc(long i) {
+//        var round = (i / 5) * 5;
+//        return (i - round > 2) ? round + 5 : round;
+//    }
 
     protected Coin getFeeCoin(long amount, List<Coin> excludedCoins) throws RPCException {
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
@@ -305,10 +311,13 @@ public abstract class TJob {
             if (config.maxConfirmWait > 0) {
                 long nowTime = Instant.now().getEpochSecond();
                 if (nowTime - waitStartTime > config.maxConfirmWait) {
-                    if (config.incFeeOnFail) { tState.incFee = true; }
-                    tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
-                            " | Re-submitting due to max confirm wait(" + config.maxConfirmWait + "s)");
-                    return false;
+
+                    if (tState.feePerCost != config.maxFeePerCost) {
+                        tState.needReplaceFee = true;
+                        tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                                " | Re-submitting due to max confirm wait(" + config.maxConfirmWait + "s)");
+                        return false;
+                    }
                 }
             }
             tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
@@ -318,7 +327,7 @@ public abstract class TJob {
              Once we know it's not in the mempool, it needs to be confirmed
              the actual coin has been spent to confirm transaction as successful */
             ;
-            if (!checkMempoolForTx(txId).first()) {
+            if (txClearedMempool(txId)) {
                 Thread.sleep(10000); // Give the node a little wait time to update to be safe
                 var mintCoinRecord = nodeAPI.getCoinRecordByName(ChiaUtils.getCoinId(txParentCoin));
                 return mintCoinRecord.data().orElseThrow(dataExcept("NodeAPi.getCoinRecordsByName")).spent();
