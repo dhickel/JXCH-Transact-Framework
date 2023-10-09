@@ -65,7 +65,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
         try {
             SpendBundle assetBundle = getAssetBundle();
             long bundleCost = getSpendCost(assetBundle);
-            long currFeePerCost = getFeePerCostNeeded(tState.bundleCost);
+            long currFeePerCost = getFeePerCostNeeded(bundleCost);
             long feePerCostCalc = Math.max(Math.max(currFeePerCost, 5), config.minFeePerCost);
             long feePerCost = Math.min(feePerCostCalc, config.maxFeePerCost);
             long feeAmount = feePerCost * bundleCost;

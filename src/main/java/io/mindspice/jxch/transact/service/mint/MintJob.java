@@ -60,7 +60,7 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
             Coin mintCoin = mintData.second();
 
             long bundleCost = getSpendCost(nftSpendBundle);
-            long currFeePerCost = getFeePerCostNeeded(tState.bundleCost);
+            long currFeePerCost = getFeePerCostNeeded(bundleCost);
             long feePerCostCalc = Math.max(Math.max(currFeePerCost, 5), config.minFeePerCost);
             long feePerCost = Math.min(feePerCostCalc, config.maxFeePerCost);
             long feeAmount = feePerCost * bundleCost;
