@@ -7,6 +7,7 @@ import io.mindspice.jxch.rpc.http.WalletAPI;
 import io.mindspice.jxch.rpc.schemas.object.Coin;
 import io.mindspice.jxch.rpc.schemas.object.CoinRecord;
 import io.mindspice.jxch.rpc.schemas.object.SpendBundle;
+import io.mindspice.jxch.rpc.schemas.wallet.Addition;
 import io.mindspice.jxch.rpc.schemas.wallet.SignedTransaction;
 import io.mindspice.jxch.rpc.util.ChiaUtils;
 import io.mindspice.jxch.rpc.util.RPCException;
@@ -21,6 +22,7 @@ import io.mindspice.jxch.transact.util.Pair;
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.stream.Collectors;
 
 
 public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<TransactionItem>>> {
@@ -65,9 +67,9 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
         try {
             SpendBundle assetBundle = getAssetBundle();
             long bundleCost = getSpendCost(assetBundle);
-            long currFeePerCost = getFeePerCostNeeded(bundleCost);
-            long feePerCostCalc = Math.max(Math.max(currFeePerCost, 5), config.minFeePerCost);
-            long feePerCost = Math.min(feePerCostCalc, config.maxFeePerCost);
+            long feePerCost = getFeePerCostNeeded(bundleCost);
+            if (feePerCost > 0) { feePerCost = Math.max(Math.max(feePerCost, 5), config.minFeePerCost); }
+            feePerCost = Math.min(feePerCost, config.maxFeePerCost);
             long feeAmount = feePerCost * bundleCost;
 
             // Get max so coin can be reused for all fee calculations
@@ -137,20 +139,26 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                 .sorted(Comparator.comparingLong(Coin::amount).reversed())
                 .toList();
 
+        long sumNeeded = totalAmount;
         List<Coin> txCoins = new ArrayList<>();
         for (Coin coin : spendableCoins) {
-            if (totalAmount > 0) {
+            if (sumNeeded > 0) {
                 txCoins.add(coin);
-                totalAmount -= coin.amount();
+                sumNeeded -= coin.amount();
             } else { break; }
         }
+
+        long changeAmount = txCoins.stream().mapToLong(Coin::amount).sum() - totalAmount;
+        Addition changeAddition = new Addition(config.changeTarget, changeAmount);
+        List<Addition> finalAdditions = txItems.stream().map(TransactionItem::addition).collect(Collectors.toList());
+        finalAdditions.add(changeAddition);
 
         parentCoins = txCoins;
         excludedCoins.addAll(txCoins);
 
         JsonNode xchSpendRequest = new RequestUtils.SignedTransactionBuilder()
                 .setWalletId(config.fundWalletId)
-                .addAdditions(txItems.stream().map(TransactionItem::addition).toList())
+                .addAdditions(finalAdditions)
                 .addCoin(txCoins)
                 .build();
 

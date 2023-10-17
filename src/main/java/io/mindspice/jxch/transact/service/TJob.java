@@ -71,6 +71,13 @@ public abstract class TJob {
     //  recalculating the fee every iteration incrementing additionally as per config
     public boolean transactionLoop(TransactionState tState) throws Exception {
         this.tState = tState;
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                " | Action: Starting Mint: " +
+                " | BundleCost: " + tState.bundleCost +
+                " | FeePerCost: " + tState.feePerCost +
+                " | TotalCost: " + tState.feeAmount);
+
+
         for (int i = 0; i < config.maxRetries; ++i) {
             tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                     " | Action: LoopIteration: " + i);
@@ -105,7 +112,7 @@ public abstract class TJob {
                 tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                         " | Action: FeeReCalc" +
                         " | FeePerCost: " + tState.feePerCost +
-                        " | totalFee: " + tState.feeAmount);
+                        " | TotalFee: " + tState.feeAmount);
 
                 if (tState.feeAmount != 0) {
                     SpendBundle feeBundle = getFeeBundle(tState.feeCoin, tState.feeAmount);
@@ -275,6 +282,10 @@ public abstract class TJob {
                 }
             }
         }
+
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                " | TotalMemPoolCost: " + totalMemCost +
+                " | FeeNeeded:" + feeNeeded);
         return feeNeeded;
     }
 

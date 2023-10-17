@@ -60,13 +60,14 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
             Coin mintCoin = mintData.second();
 
             long bundleCost = getSpendCost(nftSpendBundle);
-            long currFeePerCost = getFeePerCostNeeded(bundleCost);
-            long feePerCostCalc = Math.max(Math.max(currFeePerCost, 5), config.minFeePerCost);
-            long feePerCost = Math.min(feePerCostCalc, config.maxFeePerCost);
+            long feePerCost = getFeePerCostNeeded(bundleCost);
+            if (feePerCost > 0) { feePerCost = Math.max(Math.max(feePerCost, 5), config.minFeePerCost); }
+            feePerCost = Math.min(feePerCost, config.maxFeePerCost);
             long feeAmount = feePerCost * bundleCost;
 
             // Get max so coin can be reused for all fee calculations
             Coin feeCoin = getFeeCoin(bundleCost * config.maxFeePerCost, excludedCoins);
+            tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId + " | Fee coin selected: " + feeCoin);
             excludedCoins.add(feeCoin);
 
             SpendBundle aggBundle;
@@ -82,7 +83,6 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
                     " | Mint Coin: " + ChiaUtils.getCoinId(mintCoin) +
                     " | Fee Coin: " + ChiaUtils.getCoinId(feeCoin));
 
-            boolean incFee = false;
             state = State.STARTED;
 
             TransactionState tState = new TransactionState(
@@ -134,6 +134,7 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
         }
 
         Coin mintCoin = getFundingCoin(total);
+        tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId + " | funding coin selected: " + mintCoin);
         RequestUtils.BulkMintBuilder bulkMintbuilder = new RequestUtils.BulkMintBuilder()
                 .setMintTotal(total)
                 .addTargetAddress(targets)
@@ -143,7 +144,9 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
                 .setWalletId(config.mintWalletId);
         if (config.mintFromDid) {
             bulkMintbuilder.mintFromDid(true);
-            bulkMintbuilder.addDidCoin(getDidCoin());
+            Coin didCoin = getDidCoin();
+            tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId + " | Did coin selected: " + didCoin);
+            bulkMintbuilder.addDidCoin(didCoin);
         }
         if (config.royaltyTarget != null && !config.royaltyTarget.isEmpty()) {
             bulkMintbuilder.setRoyaltyAddress(config.royaltyTarget);
