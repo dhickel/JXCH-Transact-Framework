@@ -56,7 +56,7 @@ public abstract class TService<T> {
     }
 
     public boolean submit(T item) {
-        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Received Items: " + item);
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Received Item: " + item);
         if (stopped) { return false; }
         queue.add(item);
         return true;

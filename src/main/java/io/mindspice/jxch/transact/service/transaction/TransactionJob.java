@@ -6,31 +6,33 @@ import io.mindspice.jxch.rpc.http.FullNodeAPI;
 import io.mindspice.jxch.rpc.http.WalletAPI;
 import io.mindspice.jxch.rpc.schemas.object.Coin;
 import io.mindspice.jxch.rpc.schemas.object.CoinRecord;
-import io.mindspice.jxch.rpc.schemas.object.CoinSpend;
 import io.mindspice.jxch.rpc.schemas.object.SpendBundle;
+import io.mindspice.jxch.rpc.schemas.wallet.Addition;
+import io.mindspice.jxch.rpc.schemas.wallet.SignedTransaction;
 import io.mindspice.jxch.rpc.util.ChiaUtils;
 import io.mindspice.jxch.rpc.util.RPCException;
 import io.mindspice.jxch.rpc.util.RequestUtils;
 import io.mindspice.jxch.transact.service.TJob;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
+import io.mindspice.jxch.transact.service.TransactionState;
 import io.mindspice.jxch.transact.settings.JobConfig;
 import io.mindspice.jxch.transact.util.Pair;
 
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.stream.Collectors;
 
 
-public class TransactionJob extends TJob implements Callable<TransactionReturn> {
+public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<TransactionItem>>> {
     private final List<TransactionItem> txItems;
-    private final boolean isCat;
 
     private List<Coin> parentCoins;
+    private List<Coin> createdCoins;
 
-    public TransactionJob(JobConfig config, TLogger tLogger, FullNodeAPI nodeAPI, WalletAPI walletAPI, boolean isCat) {
+    public TransactionJob(JobConfig config, TLogger tLogger, FullNodeAPI nodeAPI, WalletAPI walletAPI) {
         super(config, tLogger, nodeAPI, walletAPI);
-        this.isCat = isCat;
         txItems = new CopyOnWriteArrayList<>();
     }
 
@@ -55,142 +57,59 @@ public class TransactionJob extends TJob implements Callable<TransactionReturn> 
     }
 
     @Override
-    public TransactionReturn call() throws Exception {
+    public Pair<Boolean, List<TransactionItem>> call() throws Exception {
         tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                 " | Started Transaction Job for Additions: " + txItems);
-        startHeight = nodeAPI.getBlockChainState().data().orElseThrow(dataExcept).peak().height();
+        startHeight = nodeAPI.getHeight().data().orElseThrow(dataExcept("NodeAPI.getHeight"));
 
         boolean incFee = false;
 
         try {
-            Pair<SpendBundle, List<Coin>> assetData = getAssetBundle();
-            excludedCoins.addAll(assetData.second());
-            SpendBundle assetBundle = assetData.first();
+            SpendBundle assetBundle = getAssetBundle();
             long bundleCost = getSpendCost(assetBundle);
-            long feePerCost = Math.min(getFeePerCostNeeded(bundleCost), config.maxFeePerCost);
+            long feePerCost = getFeePerCostNeeded(bundleCost);
+            if (feePerCost > 0) { feePerCost = Math.max(Math.max(feePerCost, 5), config.minFeePerCost); }
+            feePerCost = Math.min(feePerCost, config.maxFeePerCost);
             long feeAmount = feePerCost * bundleCost;
 
             // Get max so coin can be reused for all fee calculations
             Coin feeCoin = getFeeCoin(bundleCost * config.maxFeePerCost, excludedCoins);
             excludedCoins.add(feeCoin);
-            SpendBundle feeBundle = getFeeBundle(feeCoin, feeAmount);
-            SpendBundle aggBundle = walletAPI.aggregateSpends(List.of(assetBundle, feeBundle))
-                    .data().orElseThrow(dataExcept);
+
+            SpendBundle aggBundle;
+            if (feeAmount != 0) {
+                SpendBundle feeBundle = getFeeBundle(feeCoin, feeAmount);
+                aggBundle = walletAPI.aggregateSpends(List.of(assetBundle, feeBundle))
+                        .data().orElseThrow(dataExcept("WalletAPI.aggregateSpends"));
+            } else {
+                aggBundle = assetBundle;
+            }
 
             tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                     " | Parent Coins: " + parentCoins.stream().map(ChiaUtils::getCoinId).toList() +
                     " | Fee Coin: " + ChiaUtils.getCoinId(feeCoin));
 
             state = State.STARTED;
-            for (int i = 0; i < config.maxRetries; ++i) {
-                tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
-                        " | Action: transactionIteration: " + i);
 
-                // Spin until sync
-                while (!walletAPI.getSyncStatus().data().orElseThrow(dataExcept).synced()) {
-                    state = State.AWAITING_SYNC;
-                    tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
-                            " | Failed iteration: " + i + "/" + config.maxRetries +
-                            " | Reason: Wallet " + config.mintWalletId + " not Synced" +
-                            " | Retrying in " + config.retryWaitInterval + "ms");
-                    Thread.sleep(config.retryWaitInterval);
-                }
-                state = i == 0 ? State.STARTED : State.RETRYING;
-
-                if (i != 0 && !(feePerCost >= config.maxFeePerCost)) {
-
-                    long currFeePerCost = getFeePerCostNeeded(bundleCost);
-                    if (currFeePerCost > feePerCost) {
-                        if (i % config.feeIncInterval == 0 || incFee) {
-                            feeAmount = currFeePerCost + (5L * (long) (i / config.feeIncInterval)) * bundleCost;
-                            incFee = false;
-                        } else {
-                            feeAmount = currFeePerCost * bundleCost;
-                        }
-                    }
-                    tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
-                            " | Action: FeeReCalc" +
-                            " | FeePerCost: " + feePerCost +
-                            " | totalFee: " + feePerCost * bundleCost);
-                    feeBundle = getFeeBundle(feeCoin, feeAmount);
-                    aggBundle = walletAPI.aggregateSpends(List.of(assetBundle, feeBundle))
-                            .data().orElseThrow(dataExcept);
-                }
-
-                tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
-                        " | Action: PushingTransaction");
-                var pushResponse = nodeAPI.pushTx(aggBundle);
-
-                if (!pushResponse.success()) {
-                    // Consider transaction a success if a coin include in the spendbundle was sent
-                    // from a past iteration was successful and not recognized due to network delay or the coin was spent
-                    // elsewhere as the result of user error.
-                    if ((pushResponse.error().contains("DOUBLE_SPEND"))) {
-                        tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
-                                " | Performed a DOUBLE_SPEND, transaction consider successful. This error can be ignored, " +
-                                "but could result in a failed transaction if the coin(s) was spent elsewhere.");
-
-                        tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
-                                " | TransactJob: " + jobId + " Successful (DOUBLE_SPEND)" +
-                                " | Fee: " + feeAmount +
-                                " | Additions: " + txItems);
-                        state = State.SUCCESS;
-                        return new TransactionReturn(true, txItems, assetBundle.coinSpends().stream().map(CoinSpend::coin).toList());
-                    } else if (pushResponse.error().contains("INVALID_FEE_TOO_CLOSE_TO_ZERO")) {
-                        tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
-                                " | Failed iteration: " + i + "/" + config.maxRetries +
-                                " | Reason: INVALID_FEE_TOO_CLOSE_TO_ZERO " +
-                                " | Current Fee Per Cost: " + feePerCost +
-                                " | Retrying in " + config.retryWaitInterval + "ms");
-                        Thread.sleep(config.retryWaitInterval);
-                        incFee = config.incFeeOnFail;
-                        continue;
-                    }
-                }
-
-                Pair<Boolean, String> txResponse =
-                        checkMempoolForTx(pushResponse.data().orElseThrow(dataExcept).spendBundleName());
-
-                int waitReps = 0;
-                while (waitReps < 10 && !txResponse.first()) {
-                    Thread.sleep(5000);
-                    waitReps++;
-                    txResponse = checkMempoolForTx(pushResponse.data().orElseThrow(dataExcept).spendBundleName());
-                    tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
-                            " | Transaction State: Awaiting mempool detection" +
-                            " | Wait Iteration: " + waitReps +
-                            " | Note: You \"should\" + not see this message, if this is happening often there may be issues" +
-                            "with your node and/or node resources");
-                }
-
-                if (txResponse.first()) {
-                    state = State.AWAITING_CONFIRMATION;
-                    boolean completed = waitForTxConfirmation(txResponse.second(), excludedCoins.get(0));
-                    if (completed) {
-                        tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
-                                " | TransactJob: " + jobId + " Successful" +
-                                " | Fee: " + feeAmount +
-                                " | Additions: " + txItems);
-                        state = State.SUCCESS;
-                        return new TransactionReturn(true, txItems, assetBundle.coinSpends().stream().map(CoinSpend::coin).toList());
-                    } else {
-                        incFee = config.incFeeOnFail;
-                        tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
-                                " | Failed iteration: " + i + "/" + config.maxRetries +
-                                " | Reason: Tx dropped from mempool without sending " +
-                                " | Current Fee Per Cost: " + feePerCost +
-                                " | Retrying in " + config.retryWaitInterval + "ms");
-                    }
-                } else {
-                    tLogger.log(this.getClass(), TLogLevel.ERROR, "Job: " + jobId +
-                            " | Failed iteration: " + i + "/" + config.maxRetries +
-                            " | Reason: Failed to locate tx in mempool " +
-                            " | Current Fee Per Cost: " + feePerCost +
-                            " | Retrying in " + config.retryWaitInterval + "ms");
-                }
-                state = State.RETRYING;
-                Thread.sleep(config.retryWaitInterval);
+            TransactionState tState = new TransactionState(
+                    txItems.stream().map(TransactionItem::uuid).toList(),
+                    bundleCost,
+                    feePerCost,
+                    feeAmount,
+                    feeCoin,
+                    assetBundle,
+                    aggBundle,
+                    excludedCoins.get(0)
+            );
+            boolean success = transactionLoop(tState);
+            if (!success) {
+                tLogger.log(this.getClass(), TLogLevel.FAILED, "Job: " + jobId +
+                        " | Status: Total Failure" +
+                        " | Reason: All iteration failed.");
+                state = State.FAILED;
             }
+            return new Pair<>(success, success ? getReturn(createdCoins) : txItems);
+
         } catch (Exception ex) {
             tLogger.log(this.getClass(), TLogLevel.FAILED, "Job: " + jobId +
                     " | Exception: " + ex.getMessage() +
@@ -198,22 +117,15 @@ public class TransactionJob extends TJob implements Callable<TransactionReturn> 
             state = State.EXCEPTION;
             throw ex;
         }
-        tLogger.log(this.getClass(), TLogLevel.FAILED, "Job: " + jobId +
-                " | Status: Total Failure" +
-                " | Reason: All iteration failed.");
-        state = State.FAILED;
-        return new TransactionReturn(true, txItems, List.of());
-
     }
 
-    private Pair<SpendBundle, List<Coin>> getAssetBundle() throws RPCException {
+    private SpendBundle getAssetBundle() throws RPCException {
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: getAssetBundle");
         long totalAmount = txItems.stream().mapToLong(i -> i.addition().amount()).sum();
-        SpendBundle spendBundle = null;
 
         JsonNode coinReq = new RequestUtils.SpendableCoinBuilder()
-                .setWalletId(config.assetWalletId)
+                .setWalletId(config.fundWalletId)
                 .setExcludedCoins(excludedCoins)
                 .build();
 
@@ -221,34 +133,50 @@ public class TransactionJob extends TJob implements Callable<TransactionReturn> 
                 " | Action: getAssetBundle:getSpendableCoins");
 
         List<Coin> spendableCoins = walletAPI.getSpendableCoins(coinReq)
-                .data().orElseThrow(dataExcept)
+                .data().orElseThrow(dataExcept("WalletAPI.getSpendableCoins"))
                 .confirmedRecords()
                 .stream().map(CoinRecord::coin)
                 .sorted(Comparator.comparingLong(Coin::amount).reversed())
                 .toList();
 
+        long sumNeeded = totalAmount;
         List<Coin> txCoins = new ArrayList<>();
         for (Coin coin : spendableCoins) {
-            if (totalAmount > 0) {
+            if (sumNeeded > 0) {
                 txCoins.add(coin);
-                totalAmount -= coin.amount();
+                sumNeeded -= coin.amount();
             } else { break; }
         }
+
+        long changeAmount = txCoins.stream().mapToLong(Coin::amount).sum() - totalAmount;
+        Addition changeAddition = new Addition(config.changeTarget, changeAmount);
+        List<Addition> finalAdditions = txItems.stream().map(TransactionItem::addition).collect(Collectors.toList());
+        finalAdditions.add(changeAddition);
 
         parentCoins = txCoins;
         excludedCoins.addAll(txCoins);
 
         JsonNode xchSpendRequest = new RequestUtils.SignedTransactionBuilder()
-                .setWalletId(config.assetWalletId)
-                .addAdditions(txItems.stream().map(TransactionItem::addition).toList())
+                .setWalletId(config.fundWalletId)
+                .addAdditions(finalAdditions)
                 .addCoin(txCoins)
                 .build();
 
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: getAssetBundle:createSignedTransaction");
 
-        spendBundle = walletAPI.createSignedTransaction(xchSpendRequest)
-                .data().orElseThrow(dataExcept).spendBundle();
-        return new Pair<>(spendBundle, txCoins);
+        SignedTransaction signedTransaction = walletAPI.createSignedTransaction(xchSpendRequest)
+                .data().orElseThrow(dataExcept("WalletAPI.createSignedTransaction"));
+
+        createdCoins = signedTransaction.additions();
+        return signedTransaction.spendBundle();
+    }
+
+    private List<TransactionItem> getReturn(List<Coin> coins) {
+        List<TransactionItem> rtnList = new ArrayList<>(txItems.size());
+        for (int i = 0; i < txItems.size(); ++i) {
+            rtnList.add(txItems.get(i).withCoin(coins.get(i)));
+        }
+        return rtnList;
     }
 }
