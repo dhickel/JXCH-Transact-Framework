@@ -12,6 +12,7 @@ import io.mindspice.jxch.rpc.schemas.wallet.SignedTransaction;
 import io.mindspice.jxch.rpc.util.ChiaUtils;
 import io.mindspice.jxch.rpc.util.RPCException;
 import io.mindspice.jxch.rpc.util.RequestUtils;
+import io.mindspice.jxch.transact.service.ExcludedCoinRepo;
 import io.mindspice.jxch.transact.service.TJob;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
@@ -62,10 +63,21 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                 " | Started Transaction Job for Additions: " + txItems);
         startHeight = nodeAPI.getHeight().data().orElseThrow(dataExcept("NodeAPI.getHeight"));
 
-        boolean incFee = false;
-
         try {
-            SpendBundle assetBundle = getAssetBundle();
+            Pair<SpendBundle, List<Coin>> txData;
+            try {
+                tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId
+                        + " | Acquiring excluded coins semaphore");
+                ExcludedCoinRepo.getSemaphore().acquire();
+                txData = getAssetBundle();
+            } finally {
+                ExcludedCoinRepo.getSemaphore().release();
+                tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId
+                        + " | Released excluded coins semaphore");
+            }
+
+            SpendBundle assetBundle = txData.first();
+            List<Coin> jobCoins = txData.second();
             long bundleCost = getSpendCost(assetBundle);
             long feePerCost = getFeePerCostNeeded(bundleCost);
             if (feePerCost > 0) { feePerCost = Math.max(Math.max(feePerCost, 5), config.minFeePerCost); }
@@ -73,7 +85,19 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
             long feeAmount = feePerCost * bundleCost;
 
             // Get max so coin can be reused for all fee calculations
-            Coin feeCoin = getFeeCoin(bundleCost * config.maxFeePerCost, excludedCoins);
+
+            Coin feeCoin;
+            try {
+                tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId
+                        + " | Acquiring excluded coins semaphore");
+                ExcludedCoinRepo.getSemaphore().acquire();
+                feeCoin = getFeeCoin(bundleCost * config.maxFeePerCost, excludedCoins);
+            } finally {
+                tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId
+                        + " | Released excluded coins semaphore");
+                ExcludedCoinRepo.getSemaphore().release();
+            }
+
             excludedCoins.add(feeCoin);
 
             SpendBundle aggBundle;
@@ -91,7 +115,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
 
             state = State.STARTED;
 
-            TransactionState tState = new TransactionState(
+            tState = new TransactionState(
                     txItems.stream().map(TransactionItem::uuid).toList(),
                     bundleCost,
                     feePerCost,
@@ -99,7 +123,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                     feeCoin,
                     assetBundle,
                     aggBundle,
-                    excludedCoins.get(0)
+                    jobCoins
             );
             boolean success = transactionLoop(tState);
             if (!success) {
@@ -108,6 +132,8 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                         " | Reason: All iteration failed.");
                 state = State.FAILED;
             }
+            excludedCoins.remove(tState.feeCoin);
+            tState.jobCoins.forEach(excludedCoins::remove);
             return new Pair<>(success, success ? getReturn(createdCoins) : txItems);
 
         } catch (Exception ex) {
@@ -115,11 +141,15 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                     " | Exception: " + ex.getMessage() +
                     " | Failed Transaction Items: " + txItems, ex);
             state = State.EXCEPTION;
+            if (tState != null) {
+                excludedCoins.remove(tState.feeCoin);
+                tState.jobCoins.forEach(excludedCoins::remove);
+            }
             throw ex;
         }
     }
 
-    private SpendBundle getAssetBundle() throws RPCException {
+    private Pair<SpendBundle, List<Coin>> getAssetBundle() throws RPCException {
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: getAssetBundle");
         long totalAmount = txItems.stream().mapToLong(i -> i.addition().amount()).sum();
@@ -148,6 +178,9 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
             } else { break; }
         }
 
+        tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
+                " | Asset coins selected: " + txCoins.stream().map(ChiaUtils::getCoinId).toList());
+
         long changeAmount = txCoins.stream().mapToLong(Coin::amount).sum() - totalAmount;
         Addition changeAddition = new Addition(config.changeTarget, changeAmount);
         List<Addition> finalAdditions = txItems.stream().map(TransactionItem::addition).collect(Collectors.toList());
@@ -169,7 +202,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                 .data().orElseThrow(dataExcept("WalletAPI.createSignedTransaction"));
 
         createdCoins = signedTransaction.additions();
-        return signedTransaction.spendBundle();
+        return new Pair<>(signedTransaction.spendBundle(), txCoins);
     }
 
     private List<TransactionItem> getReturn(List<Coin> coins) {

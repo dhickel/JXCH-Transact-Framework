@@ -15,10 +15,10 @@ public class TransactionState {
     public boolean needReplaceFee = false;
     public final SpendBundle transactionBundle;
     public SpendBundle aggBundle;
-    public final Coin confirmCoin;
+    public final List<Coin> jobCoins;
 
     public TransactionState(List<String> itemIds, long bundleCost, long feePerCost, long feeAmount,
-            Coin feeCoin, SpendBundle transactionBundle, SpendBundle aggBundle, Coin confirmCoin) {
+            Coin feeCoin, SpendBundle transactionBundle, SpendBundle aggBundle, List<Coin> jobCoins) {
         this.itemIds = itemIds;
         this.bundleCost = bundleCost;
         this.feePerCost = feePerCost;
@@ -26,6 +26,6 @@ public class TransactionState {
         this.feeCoin = feeCoin;
         this.transactionBundle = transactionBundle;
         this.aggBundle = aggBundle;
-        this.confirmCoin = confirmCoin;
+        this.jobCoins = jobCoins;
     }
 }

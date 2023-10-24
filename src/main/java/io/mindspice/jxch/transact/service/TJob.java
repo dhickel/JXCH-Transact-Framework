@@ -12,11 +12,9 @@ import io.mindspice.jxch.rpc.util.RequestUtils;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
 import io.mindspice.jxch.transact.settings.JobConfig;
-import io.mindspice.jxch.transact.util.Pair;
 
 import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
 
 
@@ -39,7 +37,7 @@ public abstract class TJob {
     protected final WalletAPI walletAPI;
     protected final FullNodeAPI nodeAPI;
     protected final String jobId = UUID.randomUUID().toString();
-    protected final List<Coin> excludedCoins = new CopyOnWriteArrayList<>();
+    protected final List<Coin> excludedCoins = ExcludedCoinRepo.getSharedExcluded();
     protected volatile int startHeight;
     protected volatile State state = State.INIT;
     protected TransactionState tState;
@@ -193,7 +191,7 @@ public abstract class TJob {
                         " | Transaction State: In Mempool" +
                         " | Transaction Id: " + bundleName);
 
-                boolean completed = waitForTxConfirmation(bundleName, tState.confirmCoin);
+                boolean completed = waitForTxConfirmation(bundleName, tState.jobCoins.get(0));
                 if (completed) {
                     tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                             " | Transaction State: Successful" +
@@ -289,11 +287,6 @@ public abstract class TJob {
         return feeNeeded;
     }
 
-//    protected static long roundFpc(long i) {
-//        var round = (i / 5) * 5;
-//        return (i - round > 2) ? round + 5 : round;
-//    }
-
     protected Coin getFeeCoin(long amount, List<Coin> excludedCoins) throws RPCException {
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: gettingFeeCoin");
@@ -342,12 +335,4 @@ public abstract class TJob {
             }
         }
     }
-
-    //eh, this method didn't seem reliable, better to just iterate the mempool
-//    protected boolean txClearedMempool(String txId) throws RPCException {
-//        var resp = nodeAPI.getMempoolItemByTxId(txId, true);
-//        return resp.data().isEmpty();
-//    }
-
-
 }

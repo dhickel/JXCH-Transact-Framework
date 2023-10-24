@@ -13,6 +13,7 @@ import io.mindspice.jxch.rpc.util.ChiaUtils;
 import io.mindspice.jxch.rpc.util.RPCException;
 import io.mindspice.jxch.rpc.util.RequestUtils;
 import io.mindspice.jxch.rpc.util.bech32.AddressUtil;
+import io.mindspice.jxch.transact.service.ExcludedCoinRepo;
 import io.mindspice.jxch.transact.service.TJob;
 import io.mindspice.jxch.transact.logging.TLogLevel;
 import io.mindspice.jxch.transact.logging.TLogger;
@@ -52,12 +53,22 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
         startHeight = nodeAPI.getHeight().data().orElseThrow(dataExcept("NodeAPI.getHeight"));
 
         try {
+            Pair<NftBundle, Coin> mintData;
+            try {
+                tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId
+                        + " | Acquiring excluded coins semaphore");
+                ExcludedCoinRepo.getSemaphore().acquire();
+                mintData = getMintBundle();
+            } finally {
+                ExcludedCoinRepo.getSemaphore().release();
+                tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId
+                        + " | Released excluded coins semaphore");
+            }
 
-            Pair<NftBundle, Coin> mintData = getMintBundle();
-            excludedCoins.add(mintData.second());
             List<String> nftList = mintData.first().nftIdList();
             SpendBundle nftSpendBundle = mintData.first().spendBundle();
             Coin mintCoin = mintData.second();
+            excludedCoins.add(mintCoin);
 
             long bundleCost = getSpendCost(nftSpendBundle);
             long feePerCost = getFeePerCostNeeded(bundleCost);
@@ -66,8 +77,21 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
             long feeAmount = feePerCost * bundleCost;
 
             // Get max so coin can be reused for all fee calculations
-            Coin feeCoin = getFeeCoin(bundleCost * config.maxFeePerCost, excludedCoins);
-            tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId + " | Fee coin selected: " + feeCoin);
+
+            Coin feeCoin;
+            try {
+                tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId
+                        + " | Acquiring excluded coins semaphore");
+                ExcludedCoinRepo.getSemaphore().acquire();
+                feeCoin = getFeeCoin(bundleCost * config.maxFeePerCost, excludedCoins);
+            } finally {
+                ExcludedCoinRepo.getSemaphore().release();
+                tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId
+                        + " | Released excluded coins semaphore");
+            }
+
+            tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId + " | Fee coin selected: "
+                    + ChiaUtils.getCoinId(feeCoin));
             excludedCoins.add(feeCoin);
 
             SpendBundle aggBundle;
@@ -79,13 +103,10 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
                 aggBundle = nftSpendBundle;
             }
 
-            tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
-                    " | Mint Coin: " + ChiaUtils.getCoinId(mintCoin) +
-                    " | Fee Coin: " + ChiaUtils.getCoinId(feeCoin));
 
             state = State.STARTED;
 
-            TransactionState tState = new TransactionState(
+            tState = new TransactionState(
                     mintItems.stream().map(MintItem::uuid).toList(),
                     bundleCost,
                     feePerCost,
@@ -93,7 +114,7 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
                     feeCoin,
                     nftSpendBundle,
                     aggBundle,
-                    mintCoin
+                    List.of(mintCoin)
             );
             boolean success = transactionLoop(tState);
             if (!success) {
@@ -102,6 +123,8 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
                         " | Reason: All iteration failed.");
                 state = State.FAILED;
             }
+            excludedCoins.remove(tState.feeCoin);
+            tState.jobCoins.forEach(excludedCoins::remove);
             return new Pair<>(success, success ? getReturn(nftList) : mintItems);
 
         } catch (Exception ex) {
@@ -109,6 +132,10 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
                     " | Exception: " + ex.getMessage() +
                     " | Failed UUIDs: " + mintIds, ex);
             state = State.EXCEPTION;
+            if (tState != null) {
+                excludedCoins.remove(tState.feeCoin);
+                tState.jobCoins.forEach(excludedCoins::remove);
+            }
             throw ex;
         }
     }
@@ -125,7 +152,6 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
             String targetAddress;
             if (item.targetAddress().substring(0, 3).contains("xch")) {
                 targetAddress = item.targetAddress();
-                ;
             } else {
                 targetAddress = AddressUtil.encode(config.isTestnet ? "txch" : "xch", item.targetAddress());
             }
@@ -134,7 +160,8 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
         }
 
         Coin mintCoin = getFundingCoin(total);
-        tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId + " | funding coin selected: " + mintCoin);
+        tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId + " | Funding coin selected: "
+                + ChiaUtils.getCoinId(mintCoin));
         RequestUtils.BulkMintBuilder bulkMintbuilder = new RequestUtils.BulkMintBuilder()
                 .setMintTotal(total)
                 .addTargetAddress(targets)
@@ -145,7 +172,8 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
         if (config.mintFromDid) {
             bulkMintbuilder.mintFromDid(true);
             Coin didCoin = getDidCoin();
-            tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId + " | Did coin selected: " + didCoin);
+            tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId + " | Did coin selected: "
+                    + ChiaUtils.getCoinId(didCoin));
             bulkMintbuilder.addDidCoin(didCoin);
         }
         if (config.royaltyTarget != null && !config.royaltyTarget.isEmpty()) {
@@ -191,7 +219,8 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: GettingDIDCoin:didGetInfo");
 
-        var currDidCoin = walletAPI.didGetInfo(didCoinId).data().orElseThrow(dataExcept("WalletAPI.didGetInfo")).latestCoin();
+        var currDidCoin = walletAPI.didGetInfo(didCoinId).data()
+                .orElseThrow(dataExcept("WalletAPI.didGetInfo")).latestCoin();
 
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: GettingDIDCoin:getCoinRecordsByName");
