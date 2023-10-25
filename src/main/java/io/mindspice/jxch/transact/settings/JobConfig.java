@@ -26,6 +26,7 @@ public class JobConfig {
     public volatile int queueCheckInterval;
     public volatile int maxConfirmWait = -1;
     public volatile int jobSize;
+    public volatile long maxMemPoolCost = 550000000000L;
 
 
     public static JobConfig loadConfig(String configPath) throws IOException {

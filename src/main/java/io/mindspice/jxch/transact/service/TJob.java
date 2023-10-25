@@ -265,18 +265,21 @@ public abstract class TJob {
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | totalMemCost: " + totalMemCost);
 
-        var sortedMempool = mempool.values().stream()
-                .filter(i -> i.fee() > 0)
-                .sorted(Comparator.comparing(MempoolItem::fee))
-                .toList();
 
-        var memSum = 0L;
-        var feeNeeded = 0L;
-        for (MempoolItem item : sortedMempool) {
-            if (memSum < (cost * 1.05)) { // 5% extra  for a buffer
-                memSum += item.cost();
-                if (item.cost() > 0) {
-                    feeNeeded = item.fee() / item.cost();
+        long feeNeeded = 0;
+        if (totalMemCost + (cost * 1.05) > config.maxMemPoolCost) { // add a 5% buffer for bundle
+            var sortedMempool = mempool.values().stream()
+                    .filter(i -> i.fee() > 0)
+                    .sorted(Comparator.comparing(MempoolItem::fee))
+                    .toList();
+
+            var memSum = 0L;
+            for (MempoolItem item : sortedMempool) {
+                if (memSum < (cost * 1.05)) { // 5% extra  for a buffer
+                    memSum += item.cost();
+                    if (item.cost() > 0) {
+                        feeNeeded = item.fee() / item.cost();
+                    }
                 }
             }
         }
