@@ -70,6 +70,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                         + " | Acquiring excluded coins semaphore");
                 ExcludedCoinRepo.getSemaphore().acquire();
                 txData = getAssetBundle();
+                excludedCoins.addAll(txData.second());
             } finally {
                 ExcludedCoinRepo.getSemaphore().release();
                 tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId
@@ -91,14 +92,13 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                 tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId
                         + " | Acquiring excluded coins semaphore");
                 ExcludedCoinRepo.getSemaphore().acquire();
-                feeCoin = getFeeCoin(bundleCost * config.maxFeePerCost, excludedCoins);
+                feeCoin = getFeeCoin(bundleCost * config.maxFeePerCost, new ArrayList<>(excludedCoins));
+                excludedCoins.add(feeCoin);
             } finally {
                 tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId
                         + " | Released excluded coins semaphore");
                 ExcludedCoinRepo.getSemaphore().release();
             }
-
-            excludedCoins.add(feeCoin);
 
             SpendBundle aggBundle;
             if (feeAmount != 0) {
@@ -156,7 +156,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
 
         JsonNode coinReq = new RequestUtils.SpendableCoinBuilder()
                 .setWalletId(config.fundWalletId)
-                .setExcludedCoins(excludedCoins)
+                .setExcludedCoins(new ArrayList<>(excludedCoins))
                 .build();
 
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +

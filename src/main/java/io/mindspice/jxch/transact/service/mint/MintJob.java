@@ -59,6 +59,7 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
                         + " | Acquiring excluded coins semaphore");
                 ExcludedCoinRepo.getSemaphore().acquire();
                 mintData = getMintBundle();
+                excludedCoins.add(mintData.second());
             } finally {
                 ExcludedCoinRepo.getSemaphore().release();
                 tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId
@@ -68,7 +69,6 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
             List<String> nftList = mintData.first().nftIdList();
             SpendBundle nftSpendBundle = mintData.first().spendBundle();
             Coin mintCoin = mintData.second();
-            excludedCoins.add(mintCoin);
 
             long bundleCost = getSpendCost(nftSpendBundle);
             long feePerCost = getFeePerCostNeeded(bundleCost);
@@ -77,13 +77,13 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
             long feeAmount = feePerCost * bundleCost;
 
             // Get max so coin can be reused for all fee calculations
-
             Coin feeCoin;
             try {
                 tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId
                         + " | Acquiring excluded coins semaphore");
                 ExcludedCoinRepo.getSemaphore().acquire();
-                feeCoin = getFeeCoin(bundleCost * config.maxFeePerCost, excludedCoins);
+                feeCoin = getFeeCoin(bundleCost * config.maxFeePerCost, new ArrayList<>(excludedCoins));
+                excludedCoins.add(feeCoin);
             } finally {
                 ExcludedCoinRepo.getSemaphore().release();
                 tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId
@@ -92,7 +92,6 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
 
             tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId + " | Fee coin selected: "
                     + ChiaUtils.getCoinId(feeCoin));
-            excludedCoins.add(feeCoin);
 
             SpendBundle aggBundle;
             if (feeAmount != 0) {
@@ -102,7 +101,6 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
             } else {
                 aggBundle = nftSpendBundle;
             }
-
 
             state = State.STARTED;
 
@@ -167,6 +165,7 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
                 .addTargetAddress(targets)
                 .addMetaData(metaData)
                 .addXchCoin(mintCoin.puzzleHash())
+                .setReusePuzHash(true)
                 .setChangeTarget(config.changeTarget)
                 .setWalletId(config.mintWalletId);
         if (config.mintFromDid) {

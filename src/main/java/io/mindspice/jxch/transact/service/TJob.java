@@ -37,7 +37,7 @@ public abstract class TJob {
     protected final WalletAPI walletAPI;
     protected final FullNodeAPI nodeAPI;
     protected final String jobId = UUID.randomUUID().toString();
-    protected final List<Coin> excludedCoins = ExcludedCoinRepo.getSharedExcluded();
+    protected final Set<Coin> excludedCoins = ExcludedCoinRepo.getSharedExcluded();
     protected volatile int startHeight;
     protected volatile State state = State.INIT;
     protected TransactionState tState;
@@ -57,7 +57,7 @@ public abstract class TJob {
         return state;
     }
 
-    public List<Coin> getExcludedCoins() {
+    public Set<Coin> getExcludedCoins() {
         return excludedCoins;
     }
 
@@ -74,7 +74,6 @@ public abstract class TJob {
                 " | BundleCost: " + tState.bundleCost +
                 " | FeePerCost: " + tState.feePerCost +
                 " | TotalCost: " + tState.feeAmount);
-
 
         for (int i = 0; i < config.maxRetries; ++i) {
             tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
@@ -264,7 +263,6 @@ public abstract class TJob {
 
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | totalMemCost: " + totalMemCost);
-
 
         long feeNeeded = 0;
         if (totalMemCost + (cost * 1.05) > config.maxMemPoolCost) { // add a 5% buffer for bundle

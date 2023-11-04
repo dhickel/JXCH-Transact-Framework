@@ -2,18 +2,16 @@ package io.mindspice.jxch.transact.service;
 
 import io.mindspice.jxch.rpc.schemas.object.Coin;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.Semaphore;
 
 
 public class ExcludedCoinRepo {
     private static final ExcludedCoinRepo INSTANCE = new ExcludedCoinRepo();
-    private final List<Coin> excludedCoins = Collections.synchronizedList(new ArrayList<>());
+    private final Set<Coin> excludedCoins = Collections.synchronizedSet(new HashSet<>());
     private final Semaphore semaphore = new Semaphore(1);
 
-    public static List<Coin> getSharedExcluded() {
+    public static Set<Coin> getSharedExcluded() {
         return INSTANCE.excludedCoins;
     }
 
