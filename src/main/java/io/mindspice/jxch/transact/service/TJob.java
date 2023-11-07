@@ -302,7 +302,9 @@ public abstract class TJob {
                 .data()
                 .orElseThrow(dataExcept("WalletApi.getSpendableCoins"))
                 .confirmedRecords()
-                .stream().sorted(Comparator.comparing(c -> c.coin().amount()))
+                .stream()
+                .filter(c -> !c.spent())
+                .sorted(Comparator.comparing(c -> c.coin().amount()))
                 .toList()
                 .get(0).coin();
     }

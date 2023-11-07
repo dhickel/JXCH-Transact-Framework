@@ -165,7 +165,8 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
         List<Coin> spendableCoins = walletAPI.getSpendableCoins(coinReq)
                 .data().orElseThrow(dataExcept("WalletAPI.getSpendableCoins"))
                 .confirmedRecords()
-                .stream().map(CoinRecord::coin)
+                .stream().filter(c -> !c.spent())
+                .map(CoinRecord::coin)
                 .sorted(Comparator.comparingLong(Coin::amount).reversed())
                 .toList();
 
