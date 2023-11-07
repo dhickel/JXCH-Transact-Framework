@@ -160,7 +160,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                 .build();
 
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
-                " | Action: getAssetBundle:getSpendableCoins");
+                " | Action: getAssetBundle.getSpendableCoins");
 
         List<Coin> spendableCoins = walletAPI.getSpendableCoins(coinReq)
                 .data().orElseThrow(dataExcept("WalletAPI.getSpendableCoins"))
@@ -181,10 +181,13 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Asset coins selected: " + txCoins.stream().map(ChiaUtils::getCoinId).toList());
 
-        long changeAmount = txCoins.stream().mapToLong(Coin::amount).sum() - totalAmount;
-        Addition changeAddition = new Addition(config.changeTarget, changeAmount);
         List<Addition> finalAdditions = txItems.stream().map(TransactionItem::addition).collect(Collectors.toList());
-        finalAdditions.add(changeAddition);
+
+        long changeAmount = txCoins.stream().mapToLong(Coin::amount).sum() - totalAmount;
+        if (changeAmount != -0) {
+            Addition changeAddition = new Addition(config.changeTarget, changeAmount);
+            finalAdditions.add(changeAddition);
+        }
 
         parentCoins = txCoins;
         excludedCoins.addAll(txCoins);
@@ -196,7 +199,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                 .build();
 
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
-                " | Action: getAssetBundle:createSignedTransaction");
+                " | Action: getAssetBundle.createSignedTransaction");
 
         SignedTransaction signedTransaction = walletAPI.createSignedTransaction(xchSpendRequest)
                 .data().orElseThrow(dataExcept("WalletAPI.createSignedTransaction"));
