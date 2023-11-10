@@ -136,7 +136,7 @@ public abstract class TJob {
                                 " | Item UUIDs: " + tState.itemIds);
                         throw new IllegalStateException("Double spend on first iteration");
                     }
-                    tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
+                    tLogger.log(this.getClass(), TLogLevel.WARNING, "Job: " + jobId +
                             " | Performed a DOUBLE_SPEND, job consider successful. This error can be ignored, " +
                             "but could result in a failed job if the coin was spent elsewhere due to user error.");
 
