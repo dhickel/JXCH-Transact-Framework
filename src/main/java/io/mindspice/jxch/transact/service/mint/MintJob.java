@@ -145,7 +145,8 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
         for (var item : mintItems) {
             metaData.add(item.metaData());
             String targetAddress;
-            if (item.targetAddress().substring(0, 3).contains("xch")) {
+            String prefix = item.targetAddress().substring(0, 4);
+            if (prefix.contains("xch") || prefix.contains("txch")) {
                 targetAddress = item.targetAddress();
             } else {
                 targetAddress = AddressUtil.encode(config.isTestnet ? "txch" : "xch", item.targetAddress());
