@@ -50,8 +50,6 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
         List<String> mintIds = mintItems.stream().map(MintItem::uuid).toList();
         tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                 " | Started Mint Job for NFT UUIDs: " + mintIds);
-        startHeight = nodeAPI.getHeight().data().orElseThrow(dataExcept("NodeAPI.getHeight"));
-
         try {
             Pair<NftBundle, Coin> mintData;
             try {
@@ -90,8 +88,7 @@ public class MintJob extends TJob implements Callable<Pair<Boolean, List<MintIte
                         + " | Released excluded coins semaphore");
             }
 
-            tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId + " | Fee coin selected: "
-                    + ChiaUtils.getCoinId(feeCoin));
+            tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId + " | Fee coin Parent: " + ChiaUtils.getCoinId(feeCoin));
 
             SpendBundle aggBundle;
             if (feeAmount != 0) {

@@ -7,11 +7,12 @@ import java.io.IOException;
 
 
 public class JobConfig {
-    // Wallets
+
     public int feeWalletId;
     public int mintWalletId;
     public int didWalletId;
     public int fundWalletId;
+
     public boolean isTestnet = false;
     public boolean mintFromDid;
     public String royaltyTarget;
@@ -27,6 +28,7 @@ public class JobConfig {
     public volatile int maxConfirmWait = -1;
     public volatile int jobSize;
     public volatile long maxMemPoolCost = 550000000000L;
+    public volatile boolean debugSpendbundle = false;
 
 
     public static JobConfig loadConfig(String configPath) throws IOException {

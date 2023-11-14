@@ -61,8 +61,6 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
     public Pair<Boolean, List<TransactionItem>> call() throws Exception {
         tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                 " | Started Transaction Job for Additions: " + txItems);
-        startHeight = nodeAPI.getHeight().data().orElseThrow(dataExcept("NodeAPI.getHeight"));
-
         try {
             Pair<SpendBundle, List<Coin>> txData;
             try {
@@ -111,7 +109,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
 
             tLogger.log(this.getClass(), TLogLevel.INFO, "Job: " + jobId +
                     " | Parent Coins: " + parentCoins.stream().map(ChiaUtils::getCoinId).toList() +
-                    " | Fee Coin: " + ChiaUtils.getCoinId(feeCoin));
+                    " | Fee Coin Parent: " + feeCoin.parentCoinInfo());
 
             state = State.STARTED;
 
@@ -185,7 +183,7 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
         List<Addition> finalAdditions = txItems.stream().map(TransactionItem::addition).collect(Collectors.toList());
 
         long changeAmount = txCoins.stream().mapToLong(Coin::amount).sum() - totalAmount;
-        if (changeAmount != -0) {
+        if (changeAmount != 0) {
             Addition changeAddition = new Addition(config.changeTarget, changeAmount);
             finalAdditions.add(changeAddition);
         }

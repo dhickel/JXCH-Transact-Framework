@@ -7,6 +7,7 @@ import io.mindspice.jxch.rpc.schemas.object.Coin;
 import io.mindspice.jxch.rpc.schemas.object.MempoolItem;
 import io.mindspice.jxch.rpc.schemas.object.SpendBundle;
 import io.mindspice.jxch.rpc.util.ChiaUtils;
+import io.mindspice.jxch.rpc.util.JsonUtils;
 import io.mindspice.jxch.rpc.util.RPCException;
 import io.mindspice.jxch.rpc.util.RequestUtils;
 import io.mindspice.jxch.transact.logging.TLogLevel;
@@ -38,7 +39,6 @@ public abstract class TJob {
     protected final FullNodeAPI nodeAPI;
     protected final String jobId = UUID.randomUUID().toString();
     protected final Set<Coin> excludedCoins = ExcludedCoinRepo.getSharedExcluded();
-    protected volatile int startHeight;
     protected volatile State state = State.INIT;
     protected TransactionState tState;
 
@@ -116,6 +116,9 @@ public abstract class TJob {
                     tState.aggBundle = walletAPI.aggregateSpends(List.of(tState.transactionBundle, feeBundle))
                             .data().orElseThrow(dataExcept("WalletAPI.aggregateSpends"));
                 }
+            }
+            if (config.debugSpendbundle){
+                tLogger.log(this.getClass(), TLogLevel.DEBUG, JsonUtils.writePretty(tState.aggBundle));
             }
 
             tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
@@ -330,7 +333,6 @@ public abstract class TJob {
             /* getTxStatus returns true if tx is no longer in the mempool
              Once we know it's not in the mempool, it needs to be confirmed
              the actual coin has been spent to confirm transaction as successful */
-            ;
             if (!checkMempoolForTx(txId)) {
                 Thread.sleep(10000); // Give the node a little wait time to update to be safe
                 var mintCoinRecord = nodeAPI.getCoinRecordByName(ChiaUtils.getCoinId(txParentCoin));
