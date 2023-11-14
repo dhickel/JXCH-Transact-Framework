@@ -366,7 +366,7 @@ https://github.com/Outer-Fields/item-server/blob/master/src/main/java/io/mindspi
 
 # Notes
 
-***Transaction Item additions a hex puzzlehash, this is the 0x form not the XCH form.***
+***Transaction Item additions need to be a hex puzzlehash, this is the 0x form not the XCH form.***
 
 ***NFT address must be XCH or TXCH, but hex puzzlehash can be used as well and will be encoded internally***
 
