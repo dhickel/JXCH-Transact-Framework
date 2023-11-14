@@ -151,7 +151,8 @@ public record TransactionItem(
 ```
 
 
-### TJob/MintJob/TransactionJob
+### MintJob/TransactionJob
+Both MintJob and TransactionJob extend the super class TJob, these classes handle the actual process of a mint or transaction.
 Once either the queue hits a specific size or if the time limit specified in the config file for the service is reached Mint/Transaction 
 Items will be added to a job and sent to the executor passed to the service to run. The job is executed and returned as a future, the 
 job classes handle all the raw logic of rpc calls, coin selection, crafting the bundles, incrementing fees as needed. No real 
