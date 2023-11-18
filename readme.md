@@ -58,6 +58,36 @@ the returned nft bulk mint spendbundle bundle.
 
 ```
 
+You will also need to update the full_node_rpc_api.py with the following. This returns the spend_bundle_name when pushing the tx
+```python
+    async def push_tx(self, request: Dict[str, Any]) -> EndpointResult:
+        if "spend_bundle" not in request:
+            raise ValueError("Spend bundle not in request")
+
+        spend_bundle: SpendBundle = SpendBundle.from_json_dict(request["spend_bundle"])
+        spend_name = spend_bundle.name()
+
+        if self.service.mempool_manager.get_spendbundle(spend_name) is not None:
+            status = MempoolInclusionStatus.SUCCESS
+            error = None
+        else:
+            status, error = await self.service.add_transaction(spend_bundle, spend_name)
+            if status != MempoolInclusionStatus.SUCCESS:
+                if self.service.mempool_manager.get_spendbundle(spend_name) is not None:
+                    # Already in mempool
+                    status = MempoolInclusionStatus.SUCCESS
+                    error = None
+
+        if status == MempoolInclusionStatus.FAILED:
+            assert error is not None
+            raise ValueError(f"Failed to include transaction {spend_name}, error {error.name}")
+        return {
+            "status": status.name,
+            # Custom
+            "spend_bundle_name": spend_bundle.name(),
+        }
+```
+
 
 <br>
 

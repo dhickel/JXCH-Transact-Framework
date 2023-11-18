@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import io.mindspice.jxch.rpc.http.FullNodeAPI;
 import io.mindspice.jxch.rpc.http.WalletAPI;
 import io.mindspice.jxch.rpc.schemas.ApiResponse;
-import io.mindspice.jxch.rpc.schemas.custom.NftBundle;
+import io.mindspice.jxch.rpc.schemas.wallet.nft.NftBundle;
 import io.mindspice.jxch.rpc.schemas.object.Coin;
 import io.mindspice.jxch.rpc.schemas.object.SpendBundle;
 import io.mindspice.jxch.rpc.schemas.wallet.nft.MetaData;
