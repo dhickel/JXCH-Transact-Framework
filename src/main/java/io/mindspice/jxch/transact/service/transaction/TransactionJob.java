@@ -152,30 +152,26 @@ public class TransactionJob extends TJob implements Callable<Pair<Boolean, List<
                 " | Action: getAssetBundle");
         long totalAmount = txItems.stream().mapToLong(i -> i.addition().amount()).sum();
 
-        JsonNode coinReq = new RequestUtils.SpendableCoinBuilder()
+        JsonNode coinReq = new RequestUtils.SelectCoinBuilder()
                 .setWalletId(config.fundWalletId)
+                .setAmount(totalAmount)
                 .setExcludedCoins(new ArrayList<>(excludedCoins))
                 .build();
 
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Action: getAssetBundle.getSpendableCoins");
 
-        List<Coin> spendableCoins = walletAPI.getSpendableCoins(coinReq)
-                .data().orElseThrow(dataExcept("WalletAPI.getSpendableCoins"))
-                .confirmedRecords()
-                .stream().filter(c -> !c.spent())
-                .map(CoinRecord::coin)
-                .sorted(Comparator.comparingLong(Coin::amount).reversed())
-                .toList();
+        List<Coin> txCoins = walletAPI.selectCoins(coinReq).data()
+                .orElseThrow(dataExcept("WalletAPI.getSpendableCoins"));
 
-        long sumNeeded = totalAmount;
-        List<Coin> txCoins = new ArrayList<>();
-        for (Coin coin : spendableCoins) {
-            if (sumNeeded > 0) {
-                txCoins.add(coin);
-                sumNeeded -= coin.amount();
-            } else { break; }
-        }
+//        long sumNeeded = totalAmount;
+//        List<Coin> txCoins = new ArrayList<>();
+//        for (Coin coin : spendableCoins) {
+//            if (sumNeeded > 0) {
+//                txCoins.add(coin);
+//                sumNeeded -= coin.amount();
+//            } else { break; }
+//        }
 
         tLogger.log(this.getClass(), TLogLevel.DEBUG, "Job: " + jobId +
                 " | Asset coins selected: " + txCoins.stream().map(ChiaUtils::getCoinId).toList());
